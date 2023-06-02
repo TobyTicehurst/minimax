@@ -360,6 +360,24 @@ fn analyse(depth: u32) {
     println!("{}ms\n", time);
 }
 
+fn mtdf_test(max_depth: u32) {
+    let mut depth = 2;
+    while depth <= max_depth {
+        let now = Instant::now();
+
+        let position = Position {
+            slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
+            turn: Player::One,
+            game_over: false,
+        };
+
+        let evaluation = minimax(&position, depth, -1 * INF, INF);
+        let time = now.elapsed().as_millis();
+        println!("Evaluation: {}, depth: {}, time: {}ms", evaluation, depth, time);
+        depth += 2;
+    }
+}
+
 // fn test_all_moves() {
 //     let mut child_position_1 = Position {
 //         slots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -453,17 +471,17 @@ fn analyse(depth: u32) {
 // }
 
 fn main() {
-    let depth: u32 = 25;
+    let depth: u32 = 30;
     let mut start_game_state = mancala::MancalaGameState {
         slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
         turn: minimax::Player::One,
         game_over: false,
     };
-    let solver = minimax::Solver {
+    let mut solver = minimax::Solver {
         start_game_state: &mut start_game_state,
         depth: depth,
     };
     solver.solve();
 
-    analyse(depth);
+    mtdf_test(depth);
 }

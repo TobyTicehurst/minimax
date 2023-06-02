@@ -28,8 +28,6 @@ pub trait GameState {
     fn is_move_valid(&self, player_move: Self::Move) -> bool;
 
     fn print(&self);
-
-    //fn test() -> &mut dyn GameState;
 }
 
 
@@ -39,7 +37,7 @@ pub struct Solver<'a, T: GameState> {
 }
 
 impl<'a, T: GameState> Solver<'a, T> {
-    pub fn solve(&self) {
+    pub fn solve(&mut self) {
         println!("Depth: {}", self.depth);
         let now = Instant::now();
 
@@ -48,87 +46,127 @@ impl<'a, T: GameState> Solver<'a, T> {
             evaluation = self.start_game_state.heuristic()
         }
         else {
-            evaluation = minimax(self.start_game_state, self.depth - 1, -1 * INF, INF);
+            //evaluation = self.minimax(self.start_game_state, self.depth - 1, -1 * INF, INF);
+            evaluation = self.mtdf(self.start_game_state, 0);
         }
 
         let time = now.elapsed().as_millis();
         println!("Evaluation: {}", evaluation);
         println!("{}ms\n", time);
     }
-}
 
-pub fn minimax<T: GameState>(
-    game_state: &T, 
-    depth: u32, 
-    mut alpha: i32, 
-    mut beta: i32) -> i32 {
+    pub fn mtdf(
+        &mut self,
+        game_state: &T,
+        mut guess: i32) -> i32 {
+        
+        let mut depth: u32 = 2;
 
-    // TODO return on first call if depth is 0 or game over
+        while depth <= self.depth {
+            let now = Instant::now();
 
-    //game_state.print();
-
-    // get new game state (hopefully this gets inlined so the struct never gets copied)
-    let mut child_game_state = T::new();
-
-    match game_state.get_turn() {
-        Player::One => {
-            let mut value = -1 * INF;
-            
-            // TODO return a vec as some moves wont be valid, or check if a move is valid
-            let move_order = game_state.get_move_order();
-            
-            for move_index in move_order {
-                if game_state.is_move_valid(move_index) {
-                    // make each move and store each result in child_game_state
-                    game_state.make_move(&mut child_game_state, move_index);
-                    let evaluation: i32;
-                    // recursively evaluate the child game state
-                    if depth == 0 || child_game_state.is_game_over() {
-                        evaluation = child_game_state.heuristic();
-                    }
-                    else {
-                        evaluation = minimax(&child_game_state, depth - 1, alpha, beta);
-                    }
-                    
-                    value = max(evaluation, value);
-
-                    alpha = max(alpha, value);
-
-                    if value >= beta {
-                        break;
-                    }
+            let mut beta: i32;
+            let mut lower_bound: i32 = -1 * INF;
+            let mut upper_bound: i32 = INF;
+    
+            while lower_bound < upper_bound {
+                beta = max(guess, lower_bound + 1);
+                guess = self.minimax(game_state, depth - 1, beta - 1, beta);
+                if guess < beta {
+                    upper_bound = guess;
+                }
+                else {
+                    lower_bound = guess;
                 }
             }
 
-            return value;
+            let time = now.elapsed().as_millis();
+            println!("Evaluation: {}, depth: {}, time: {}ms", guess, depth, time);
+            depth += 2;
         }
-        Player::Two => {
-            let mut value = INF;
 
-            let move_order = game_state.get_move_order();
-            for move_index in move_order {
-                if game_state.is_move_valid(move_index) {
-                    // make each move and store each result in child_game_state
-                    game_state.make_move(&mut child_game_state, move_index);
-                    let evaluation: i32;
-                    // recursively evaluate the child game state
-                    if depth == 0 || child_game_state.is_game_over() {
-                        evaluation = child_game_state.heuristic();
-                    }
-                    else {
-                        evaluation = minimax(&child_game_state, depth - 1, alpha, beta);
-                    }
-                    value = min(evaluation, value);
+        return guess;
+    }
 
-                    beta = min(beta, value);
+    pub fn minimax(
+        &mut self,
+        game_state: &T, 
+        depth: u32, 
+        mut alpha: i32, 
+        mut beta: i32) -> i32 {
 
-                    if value <= alpha {
-                        break;
+        // TODO return on first call if depth is 0 or game over
+
+        //game_state.print();
+
+        // get new game state (hopefully this gets inlined so the struct never gets copied)
+        let mut child_game_state = T::new();
+
+        match game_state.get_turn() {
+            Player::One => {
+                let mut value = -1 * INF;
+                
+                // TODO return a vec as some moves wont be valid, or check if a move is valid
+                let move_order = game_state.get_move_order();
+                
+                for move_index in move_order {
+                    if game_state.is_move_valid(move_index) {
+                        // make each move and store each result in child_game_state
+                        game_state.make_move(&mut child_game_state, move_index);
+                        let evaluation: i32;
+                        // recursively evaluate the child game state
+                        if depth == 0 || child_game_state.is_game_over() {
+                            evaluation = child_game_state.heuristic();
+                        }
+                        else {
+                            evaluation = self.minimax(&child_game_state, depth - 1, alpha, beta);
+                            // if not too deep (pass a context variable) (could test outside of for loop)
+                            //     child_opening_index = context.openingTree.get_child(opening_index, move)
+                            // evaluation = minimax(context, &child_game_state, depth - 1, alpha, beta, child_opening_index);
+                        }
+                        
+                        value = max(evaluation, value);
+
+                        alpha = max(alpha, value);
+
+                        // openingTree.update(index, move, value, alpha, beta, depth)
+
+                        if value >= beta {
+                            break;
+                        }
                     }
                 }
-            }
 
-            return value;
+                return value;
+            }
+            Player::Two => {
+                let mut value = INF;
+
+                let move_order = game_state.get_move_order();
+                for move_index in move_order {
+                    if game_state.is_move_valid(move_index) {
+                        // make each move and store each result in child_game_state
+                        game_state.make_move(&mut child_game_state, move_index);
+                        let evaluation: i32;
+                        // recursively evaluate the child game state
+                        if depth == 0 || child_game_state.is_game_over() {
+                            evaluation = child_game_state.heuristic();
+                        }
+                        else {
+                            evaluation = self.minimax(&child_game_state, depth - 1, alpha, beta);
+                        }
+                        value = min(evaluation, value);
+
+                        beta = min(beta, value);
+
+                        if value <= alpha {
+                            break;
+                        }
+                    }
+                }
+
+                return value;
+            }
         }
     }
 }
