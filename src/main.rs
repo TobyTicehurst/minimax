@@ -2,6 +2,12 @@ use std::cmp::max;
 use std::cmp::min;
 use std::time::Instant;
 
+// mod tree;
+// use crate::tree::Tree;
+// use crate::tree::Node;
+
+mod minimax;
+mod mancala;
 
 const INF: i32 = 100;
 
@@ -42,12 +48,6 @@ impl Position {
         }
         return value;
     }
-}
-
-struct OpeningTree {
-    children: [Option<Box<OpeningTree>>; 6],
-    evaluation: i32,
-    best_move: usize,
 }
 
 fn half_clone_position(position: &Position, child_position: &mut Position) {
@@ -212,7 +212,6 @@ fn player_one_make_move(position: &Position, child_position: &mut Position, move
 
     // get the goal indices for later
     let player_goal = 6;
-    let opponent_goal = 13;
 
     // where did the final stone land?
     let final_slot_index = player_one_move_stones(child_position, move_index);
@@ -230,7 +229,6 @@ fn player_two_make_move(position: &Position, child_position: &mut Position, move
 
     // get the goal indices for later
     let player_goal = 13;
-    let opponent_goal = 6;
 
     // where did the final stone land?
     let final_slot_index = player_two_move_stones(child_position, move_index);
@@ -242,20 +240,10 @@ fn player_two_make_move(position: &Position, child_position: &mut Position, move
     }
 }
 
-fn get_move_order_player_one(position: &Position, move_order: &mut [usize; 6], openings: Option<&OpeningTree>) {
+fn get_move_order_player_one(position: &Position, move_order: &mut [usize; 6]) {
     let mut priority_index = 0;
-    let mut moves = vec![0, 1, 2, 3, 4, 5];
-    
-    match openings {
-        Some(x) => {
-            priority_index = 1;
-            move_order[0] = x.best_move;
-            moves.retain(|&y| y != x.best_move);
-        }
-        None => priority_index = 0,
-    }
 
-    for i in moves {
+    for i in 0..6 {
         // if playing this move gives another turn
         if i as u32 + position.slots[i] == 6 {
             move_order[priority_index] = i;
@@ -282,9 +270,13 @@ fn get_move_order_player_two(position: &Position, move_order: &mut [usize; 6]) {
     }
 }
 
-fn minimax(position: &Position, depth: u32, mut alpha: i32, mut beta: i32, openings: Option<&OpeningTree>) -> i32 {
+fn minimax(
+    position: &Position, 
+    depth: u32, 
+    mut alpha: i32, 
+    mut beta: i32) -> i32 {
 
-    position.print();
+    //position.print();
 
     if depth == 0 || position.game_over {
         return position.evaluate();
@@ -302,7 +294,7 @@ fn minimax(position: &Position, depth: u32, mut alpha: i32, mut beta: i32, openi
             let mut value = -1 * INF;
             
             let mut move_order: [usize; 6] = [5, 4, 3, 2, 1, 0];
-            get_move_order_player_one(position, &mut move_order, openings);
+            get_move_order_player_one(position, &mut move_order);
             for move_index in move_order {
                 //let move_index = 5 - i;
                 if position.slots[move_index] == 0 {
@@ -310,18 +302,10 @@ fn minimax(position: &Position, depth: u32, mut alpha: i32, mut beta: i32, openi
                 }
                 // make each move and store each result in child_position
                 player_one_make_move(&position, &mut child_position, move_index);
-                let mut child_openings: Option<&OpeningTree>;
-                match openings {
-                    Some(x) => {
-                        match &x.children[move_index] {
-                            Some(y) => child_openings = Some(y.as_ref()),
-                            None => child_openings = None,
-                        }
-                    }
-                    None => child_openings = None,
-                }
+                // get next position in opening tree
+                //let next_node = opening_tree.get_child(current_node, move_index);
                 // recursively evaluate the child position
-                value = max(minimax(&child_position, depth - 1, alpha, beta, child_openings), value);
+                value = max(minimax(&child_position, depth - 1, alpha, beta), value);
 
                 alpha = max(alpha, value);
 
@@ -345,7 +329,7 @@ fn minimax(position: &Position, depth: u32, mut alpha: i32, mut beta: i32, openi
                 // make each move and store each result in child_position
                 player_two_make_move(&position, &mut child_position, move_index);
                 // recursively evaluate the child position
-                value = min(minimax(&child_position, depth - 1, alpha, beta, None), value);
+                value = min(minimax(&child_position, depth - 1, alpha, beta), value);
 
                 beta = min(beta, value);
 
@@ -359,103 +343,6 @@ fn minimax(position: &Position, depth: u32, mut alpha: i32, mut beta: i32, openi
     }
 }
 
-fn get_best_move(position: &Position, depth: u32) -> usize {
-
-    // default initialisation
-    let mut child_position = Position {
-        slots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        turn: Player::One,
-        game_over: false,
-    };
-
-    match position.turn {
-        Player::One => {
-            let mut value = -1 * INF;
-            let mut best_move = 0;
-            
-            for move_index in 0..6 {
-                if position.slots[move_index] == 0 {
-                    continue
-                }
-                // make each move and store each result in child_position
-                player_one_make_move(&position, &mut child_position, move_index);
-                // recursively evaluate the child position
-                let evaluation = minimax(&child_position, depth - 1, -1 * INF, INF, None);
-                if evaluation > value {
-                    value = evaluation;
-                    best_move = move_index;
-                }
-            }
-
-            return best_move;
-        }
-        Player::Two => {
-            let mut value = INF;
-            let mut best_move = 0;
-
-            for move_index in 7..13 {
-                if position.slots[move_index] == 0 {
-                    continue
-                }
-                // make each move and store each result in child_position
-                player_two_make_move(&position, &mut child_position, move_index);
-                // recursively evaluate the child position
-                let evaluation = minimax(&child_position, depth - 1, -1 * INF, INF, None);
-                if evaluation < value {
-                    value = evaluation;
-                    best_move = move_index;
-                }
-            }
-
-            return best_move;
-        }
-    }
-}
-
-fn play_game(depth: u32) {
-    let mut position = Position {
-        slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
-        turn: Player::One,
-        game_over: false,
-    };
-    let mut child_position = Position {
-        slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
-        turn: Player::One,
-        game_over: false,
-    };
-    position.print();
-    println!("Depth: {}", depth);
-
-    loop {
-        let now = Instant::now();
-        
-        let evaluation = minimax(&position, depth, -1 * INF, INF, None);
-        let best_move = get_best_move(&position, depth);
-
-        println!("Best move: {}", best_move);
-        println!("Evaluation at depth {}: {}", depth, evaluation);
-        // it prints '2'
-        println!("{}ms\n", now.elapsed().as_millis());
-
-        match position.turn {
-            Player::One => {
-                player_one_make_move(&position, &mut child_position, best_move);
-            }
-            Player::Two => {
-                player_two_make_move(&position, &mut child_position, best_move);
-            }
-        }
-
-        child_position.print();
-
-        if child_position.game_over {
-            return;
-        }
-        position.slots = child_position.slots.clone();
-        position.turn = child_position.turn.clone();
-    }
-}
-
 fn analyse(depth: u32) {
     println!("Depth: {}", depth);
     let now = Instant::now();
@@ -466,145 +353,117 @@ fn analyse(depth: u32) {
         game_over: false,
     };
 
-    let openings = OpeningTree {
-        children: [None, None, None, None, None, None],
-        evaluation: 10,
-        best_move: 0,
-    };
-    let evaluation = minimax(&position, depth, -1 * INF, INF, Some(&openings));
+    let evaluation = minimax(&position, depth, -1 * INF, INF);
     let time = now.elapsed().as_millis();
     println!("Evaluation: {}", evaluation);
     // it prints '2'
     println!("{}ms\n", time);
 }
 
-fn analyse_all(depth: u32) {
-    let mut current_depth = 1;
-    while current_depth <= depth {
-        println!("Depth: {}", current_depth);
-        let now = Instant::now();
+// fn test_all_moves() {
+//     let mut child_position_1 = Position {
+//         slots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+//         turn: Player::One,
+//         game_over: false,
+//     };
+//     let mut child_position_2 = Position {
+//         slots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+//         turn: Player::One,
+//         game_over: false,
+//     };
+
+//     println!("Testing...");
+//     let now = Instant::now();
     
-        let position = Position {
-            slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
-            turn: Player::One,
-            game_over: false,
-        };
-        let evaluation = minimax(&position, current_depth, -1 * INF, INF, None);
-        let time = now.elapsed().as_millis();
-        println!("Evaluation: {}", evaluation);
-        // it prints '2'
-        println!("{}ms\n", time);
+//     // test player 1 moves
+//     for number_stones in 1..49 {
+//         for move_index in 0..6 {
+//             child_position_1.slots[move_index] = number_stones;
+//             child_position_2.slots[move_index] = number_stones;
+//             let final_slot_index_1 = move_stones(&mut child_position_1, move_index, 13);
+//             let final_slot_index_2 = player_one_move_stones(&mut child_position_2, move_index);
 
-        current_depth += 1;
-    }
-}
+//             let mut diff = false;
+//             for i in 0..14 {
+//                 if child_position_1.slots[i] != child_position_2.slots[i] {
+//                     diff = true;
+//                     break;
+//                 }
+//             }
 
-fn test_all_moves() {
-    let mut child_position_1 = Position {
-        slots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        turn: Player::One,
-        game_over: false,
-    };
-    let mut child_position_2 = Position {
-        slots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        turn: Player::One,
-        game_over: false,
-    };
+//             if diff ||
+//                final_slot_index_1 != final_slot_index_2 ||
+//                child_position_1.turn != child_position_2.turn ||
+//                child_position_1.game_over != child_position_2.game_over {
+//                 println!("Move {}, stones {}\n", move_index, number_stones);
+//                 println!("final_slot_index_1 {}, final_slot_index_2 {}\n", final_slot_index_1, final_slot_index_2);
+//                 println!("turn 1 {:?}, turn 2 {:?}\n", child_position_1.turn, child_position_2.turn);
+//                 println!("game_over 1 {}, game_over 2 {}\n", child_position_1.game_over, child_position_2.game_over);
+//                 child_position_1.print();
+//                 child_position_2.print();
+//                 panic!();
+//             }
 
-    println!("Testing...");
-    let now = Instant::now();
-    
-    // test player 1 moves
-    for number_stones in 1..49 {
-        for move_index in 0..6 {
-            child_position_1.slots[move_index] = number_stones;
-            child_position_2.slots[move_index] = number_stones;
-            let final_slot_index_1 = move_stones(&mut child_position_1, move_index, 13);
-            let final_slot_index_2 = player_one_move_stones(&mut child_position_2, move_index);
-
-            let mut diff = false;
-            for i in 0..14 {
-                if child_position_1.slots[i] != child_position_2.slots[i] {
-                    diff = true;
-                    break;
-                }
-            }
-
-            if diff ||
-               final_slot_index_1 != final_slot_index_2 ||
-               child_position_1.turn != child_position_2.turn ||
-               child_position_1.game_over != child_position_2.game_over {
-                println!("Move {}, stones {}\n", move_index, number_stones);
-                println!("final_slot_index_1 {}, final_slot_index_2 {}\n", final_slot_index_1, final_slot_index_2);
-                println!("turn 1 {:?}, turn 2 {:?}\n", child_position_1.turn, child_position_2.turn);
-                println!("game_over 1 {}, game_over 2 {}\n", child_position_1.game_over, child_position_2.game_over);
-                child_position_1.print();
-                child_position_2.print();
-                panic!();
-            }
-
-            for i in 0..14 {
-                child_position_1.slots[i] = 0;
-                child_position_2.slots[i] = 0;
-            }
+//             for i in 0..14 {
+//                 child_position_1.slots[i] = 0;
+//                 child_position_2.slots[i] = 0;
+//             }
             
-        }
+//         }
 
-        child_position_1.turn = Player::Two;
-        child_position_2.turn = Player::Two;
+//         child_position_1.turn = Player::Two;
+//         child_position_2.turn = Player::Two;
 
-        for move_index in 7..13 {
-            child_position_1.slots[move_index] = number_stones;
-            child_position_2.slots[move_index] = number_stones;
-            let final_slot_index_1 = move_stones(&mut child_position_1, move_index, 6);
-            let final_slot_index_2 = player_two_move_stones(&mut child_position_2, move_index);
+//         for move_index in 7..13 {
+//             child_position_1.slots[move_index] = number_stones;
+//             child_position_2.slots[move_index] = number_stones;
+//             let final_slot_index_1 = move_stones(&mut child_position_1, move_index, 6);
+//             let final_slot_index_2 = player_two_move_stones(&mut child_position_2, move_index);
 
-            let mut diff = false;
-            for i in 0..14 {
-                if child_position_1.slots[i] != child_position_2.slots[i] {
-                    diff = true;
-                    break;
-                }
-            }
+//             let mut diff = false;
+//             for i in 0..14 {
+//                 if child_position_1.slots[i] != child_position_2.slots[i] {
+//                     diff = true;
+//                     break;
+//                 }
+//             }
 
-            if diff ||
-               final_slot_index_1 != final_slot_index_2 ||
-               child_position_1.turn != child_position_2.turn ||
-               child_position_1.game_over != child_position_2.game_over {
-                println!("Move {}, stones {}\n", move_index, number_stones);
-                println!("final_slot_index_1 {}, final_slot_index_2 {}\n", final_slot_index_1, final_slot_index_2);
-                println!("turn 1 {:?}, turn 2 {:?}\n", child_position_1.turn, child_position_2.turn);
-                println!("game_over 1 {}, game_over 2 {}\n", child_position_1.game_over, child_position_2.game_over);
-                child_position_1.print();
-                child_position_2.print();
-                panic!();
-            }
+//             if diff ||
+//                final_slot_index_1 != final_slot_index_2 ||
+//                child_position_1.turn != child_position_2.turn ||
+//                child_position_1.game_over != child_position_2.game_over {
+//                 println!("Move {}, stones {}\n", move_index, number_stones);
+//                 println!("final_slot_index_1 {}, final_slot_index_2 {}\n", final_slot_index_1, final_slot_index_2);
+//                 println!("turn 1 {:?}, turn 2 {:?}\n", child_position_1.turn, child_position_2.turn);
+//                 println!("game_over 1 {}, game_over 2 {}\n", child_position_1.game_over, child_position_2.game_over);
+//                 child_position_1.print();
+//                 child_position_2.print();
+//                 panic!();
+//             }
 
-            for i in 0..14 {
-                child_position_1.slots[i] = 0;
-                child_position_2.slots[i] = 0;
-            }
-        }
-    }
+//             for i in 0..14 {
+//                 child_position_1.slots[i] = 0;
+//                 child_position_2.slots[i] = 0;
+//             }
+//         }
+//     }
 
-    let time = now.elapsed().as_millis();
-    println!("{}ms\n", time);
-}
+//     let time = now.elapsed().as_millis();
+//     println!("{}ms\n", time);
+// }
 
 fn main() {
-    let choice = 2;
-    if choice == 1 {
-        play_game(20);
-    }
-    else if choice == 2 {
-        analyse(1);
-    }
-    else if choice == 3 {
-        analyse_all(30);
-    }
-    else if choice == 4 {
-        test_all_moves();
-    }
+    let depth: u32 = 25;
+    let start_game_state = mancala::MancalaGameState {
+        slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
+        turn: minimax::Player::One,
+        game_over: false,
+    };
+    let solver = minimax::Solver {
+        start_game_state: &start_game_state,
+        depth: depth,
+    };
+    solver.solve();
 
-    
+    analyse(depth);
 }
