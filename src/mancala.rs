@@ -15,6 +15,8 @@ pub struct MancalaGameState {
 }
 
 impl GameState for MancalaGameState {
+    type Move = usize;
+    
     fn new() -> MancalaGameState {
         MancalaGameState {
             slots: [0; TOTAL_SLOTS],
@@ -23,21 +25,21 @@ impl GameState for MancalaGameState {
         }
     }
 
-    fn make_move(&self, next_state: &mut MancalaGameState, move_index: usize) {
+    fn make_move(&self, next_state: &mut MancalaGameState, player_move: usize) {
         match self.get_turn() {
-            Player::One => self.player_one_make_move(next_state, move_index),
-            Player::Two => self.player_two_make_move(next_state, move_index),
+            Player::One => self.player_one_make_move(next_state, player_move),
+            Player::Two => self.player_two_make_move(next_state, player_move),
         }
     }
 
-    fn get_move_order(&self) -> Vec<usize> {
+    fn get_move_order(&self) -> [usize; 6] {
         let mut move_order: [usize; SLOTS_PER_SIDE] = [0; SLOTS_PER_SIDE];
         match self.get_turn() {
             Player::One => self.get_move_order_player_one(&mut move_order),
             Player::Two => self.get_move_order_player_two(&mut move_order),
         }
 
-        return move_order.to_vec();
+        return move_order;
     }
 
     fn heuristic(&self) -> i32 {
@@ -61,8 +63,8 @@ impl GameState for MancalaGameState {
         return self.game_over;
     }
 
-    fn is_move_valid(&self, move_index: usize) -> bool {
-        return self.slots[move_index] != 0;
+    fn is_move_valid(&self, player_move: usize) -> bool {
+        return self.slots[player_move] != 0;
     }
 
     fn print(&self) {
@@ -111,36 +113,36 @@ impl MancalaGameState {
     }
 
     // move index will be between 0 and 5 inclusive
-    fn player_one_move_stones(&mut self, move_index: usize) -> usize {
+    fn player_one_move_stones(&mut self, player_move: usize) -> usize {
         // take stones out of slot
-        let number_stones = self.slots[move_index];
-        self.slots[move_index] = 0;
+        let number_stones = self.slots[player_move];
+        self.slots[player_move] = 0;
 
         for i in 0..13 {
             // add stones for each loop around the board (usually 0)
             self.slots[i] += number_stones / 13;
             // then possibly add a stone for the remainder
             // could make this branchless
-            if (i + 12 - move_index) % 13 < number_stones as usize % 13 {
+            if (i + 12 - player_move) % 13 < number_stones as usize % 13 {
                 self.slots[i] += 1;
             }
         }
 
-        return (move_index + number_stones as usize) % 13;
+        return (player_move + number_stones as usize) % 13;
     }
 
     // move index will be between 7 and 12 inclusive
-    fn player_two_move_stones(&mut self, move_index: usize) -> usize {
+    fn player_two_move_stones(&mut self, player_move: usize) -> usize {
         // take stones out of slot
-        let number_stones = self.slots[move_index];
-        self.slots[move_index] = 0;
+        let number_stones = self.slots[player_move];
+        self.slots[player_move] = 0;
 
         // need to skip slot 6 so do this in 2 loops
         for i in 0..6 {
             // add stones for each loop around the board (usually 0)
             self.slots[i] += number_stones / 13;
             // then possibly add a stone for the remainder
-            if (i + 13 - move_index) % 13 < number_stones as usize % 13 {
+            if (i + 13 - player_move) % 13 < number_stones as usize % 13 {
                 self.slots[i] += 1;
             }
         }
@@ -150,22 +152,22 @@ impl MancalaGameState {
             // add stones for each loop around the board (usually 0)
             self.slots[i] += number_stones / 13;
             // then possibly add a stone for the remainder
-            if (i + 12 - move_index) % 13 < number_stones as usize % 13 {
+            if (i + 12 - player_move) % 13 < number_stones as usize % 13 {
                 self.slots[i] += 1;
             }
         }
 
         // this is a way to find the final slot while skipping slot 6
-        return (7 + (move_index - 7 + number_stones as usize) % 13) % 14;
+        return (7 + (player_move - 7 + number_stones as usize) % 13) % 14;
     }
 
-    // fn move_stones(&mut self, move_index: usize, opponent_goal: usize) -> usize {
+    // fn move_stones(&mut self, player_move: usize, opponent_goal: usize) -> usize {
     //     // take stones out of slot
-    //     let mut number_stones = self.slots[move_index];
-    //     self.slots[move_index] = 0;
+    //     let mut number_stones = self.slots[player_move];
+    //     self.slots[player_move] = 0;
 
     //     // start here...
-    //     let mut slot_index = move_index;
+    //     let mut slot_index = player_move;
     //     // ...and add stones 1 by 1 to slots
     //     while number_stones > 0 {
     //         number_stones -= 1;
@@ -233,7 +235,7 @@ impl MancalaGameState {
         return capture_ocurred;
     }
 
-    fn player_one_make_move(&self, child_position: &mut MancalaGameState, move_index: usize) {
+    fn player_one_make_move(&self, child_position: &mut MancalaGameState, player_move: usize) {
         // deep copy position
         self.half_clone_position(child_position);
     
@@ -241,17 +243,17 @@ impl MancalaGameState {
         let player_goal = 6;
     
         // where did the final stone land?
-        let final_slot_index = child_position.player_one_move_stones(move_index);
+        let final_slot_index = child_position.player_one_move_stones(player_move);
         
         let capture_ocurred = child_position.player_one_handle_final_slot(final_slot_index, player_goal);
     
         // these are the only ways the game can end on player one's turn
-        if move_index == 5 || capture_ocurred {
+        if player_move == 5 || capture_ocurred {
             child_position.handle_game_over();
         }
     }
     
-    fn player_two_make_move(&self, child_position: &mut MancalaGameState, move_index: usize) {
+    fn player_two_make_move(&self, child_position: &mut MancalaGameState, player_move: usize) {
         // deep copy position
         self.half_clone_position(child_position);
     
@@ -259,11 +261,11 @@ impl MancalaGameState {
         let player_goal = 13;
     
         // where did the final stone land?
-        let final_slot_index = child_position.player_two_move_stones(move_index);
+        let final_slot_index = child_position.player_two_move_stones(player_move);
         let capture_ocurred = child_position.player_two_handle_final_slot(final_slot_index, player_goal);
     
         // these are the only ways the game can end on player two's turn
-        if move_index == 12 || capture_ocurred {
+        if player_move == 12 || capture_ocurred {
             child_position.handle_game_over();
         }
     }

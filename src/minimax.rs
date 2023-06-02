@@ -11,11 +11,13 @@ pub enum Player {
 }
 
 pub trait GameState {
+    type Move: Copy;
+
     fn new() -> Self where Self: Sized;
 
-    fn get_move_order(&self) -> Vec<usize>;
+    fn get_move_order(&self) -> [Self::Move; 6];
 
-    fn make_move(&self, next_state: &mut Self, move_index: usize);
+    fn make_move(&self, next_state: &mut Self, player_move: Self::Move);
 
     fn heuristic(&self) -> i32;
 
@@ -23,19 +25,13 @@ pub trait GameState {
 
     fn is_game_over(&self) -> bool;
 
-    fn is_move_valid(&self, move_index: usize) -> bool;
+    fn is_move_valid(&self, player_move: Self::Move) -> bool;
 
     fn print(&self);
 
     //fn test() -> &mut dyn GameState;
 }
 
-// impl<'a, T> GameState for &'a T where T: GameState {}
-// impl<'a, T> GameState for &'a mut T where T: GameState {}
-
-// enum SolveMethod {
-//     Minimax,
-// }
 
 pub struct Solver<'a, T: GameState> {
     pub start_game_state: &'a T,
@@ -46,7 +42,15 @@ impl<'a, T: GameState> Solver<'a, T> {
     pub fn solve(&self) {
         println!("Depth: {}", self.depth);
         let now = Instant::now();
-        let evaluation = minimax(self.start_game_state, self.depth, -1 * INF, INF);
+
+        let evaluation: i32;
+        if self.depth == 0 || self.start_game_state.is_game_over() {
+            evaluation = self.start_game_state.heuristic()
+        }
+        else {
+            evaluation = minimax(self.start_game_state, self.depth - 1, -1 * INF, INF);
+        }
+
         let time = now.elapsed().as_millis();
         println!("Evaluation: {}", evaluation);
         println!("{}ms\n", time);
@@ -59,11 +63,9 @@ pub fn minimax<T: GameState>(
     mut alpha: i32, 
     mut beta: i32) -> i32 {
 
-    //game_state.print();
+    // TODO return on first call if depth is 0 or game over
 
-    if depth == 0 || game_state.is_game_over() {
-        return game_state.heuristic();
-    }
+    //game_state.print();
 
     // get new game state (hopefully this gets inlined so the struct never gets copied)
     let mut child_game_state = T::new();
@@ -79,8 +81,16 @@ pub fn minimax<T: GameState>(
                 if game_state.is_move_valid(move_index) {
                     // make each move and store each result in child_game_state
                     game_state.make_move(&mut child_game_state, move_index);
+                    let evaluation: i32;
                     // recursively evaluate the child game state
-                    value = max(minimax(&child_game_state, depth - 1, alpha, beta), value);
+                    if depth == 0 || child_game_state.is_game_over() {
+                        evaluation = child_game_state.heuristic();
+                    }
+                    else {
+                        evaluation = minimax(&child_game_state, depth - 1, alpha, beta);
+                    }
+                    
+                    value = max(evaluation, value);
 
                     alpha = max(alpha, value);
 
@@ -100,8 +110,15 @@ pub fn minimax<T: GameState>(
                 if game_state.is_move_valid(move_index) {
                     // make each move and store each result in child_game_state
                     game_state.make_move(&mut child_game_state, move_index);
+                    let evaluation: i32;
                     // recursively evaluate the child game state
-                    value = min(minimax(&child_game_state, depth - 1, alpha, beta), value);
+                    if depth == 0 || child_game_state.is_game_over() {
+                        evaluation = child_game_state.heuristic();
+                    }
+                    else {
+                        evaluation = minimax(&child_game_state, depth - 1, alpha, beta);
+                    }
+                    value = min(evaluation, value);
 
                     beta = min(beta, value);
 

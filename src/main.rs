@@ -454,13 +454,13 @@ fn analyse(depth: u32) {
 
 fn main() {
     let depth: u32 = 25;
-    let start_game_state = mancala::MancalaGameState {
+    let mut start_game_state = mancala::MancalaGameState {
         slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
         turn: minimax::Player::One,
         game_over: false,
     };
     let solver = minimax::Solver {
-        start_game_state: &start_game_state,
+        start_game_state: &mut start_game_state,
         depth: depth,
     };
     solver.solve();
