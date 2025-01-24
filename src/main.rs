@@ -1,487 +1,452 @@
-use std::cmp::max;
-use std::cmp::min;
-use std::time::Instant;
+//TODO delete me
+#![allow(warnings)]
 
-// mod tree;
-// use crate::tree::Tree;
-// use crate::tree::Node;
+// mod mancala;
+// mod endgame;
 
-mod minimax;
-mod mancala;
+use num_integer::binomial;
+use std::sync::Mutex;
 
-const INF: i32 = 100;
+const MAX: usize = 64; 
+static mut lookup: [u64; MAX*MAX] = [0; MAX*MAX]; 
 
-#[derive(Debug, Clone, PartialEq)]
-enum Player {
-    One,
-    Two,
-}
-
-#[derive(Debug)]
-struct Position {
-    // number of stones in each slot
-    slots: [u32; 14],
-    // who's turn is it next
-    turn: Player,
-    game_over: bool,
-}
-
-impl Position {
-    fn print(&self) {
-        println!("  {} {} {} {} {} {}  ", self.slots[12], self.slots[11], self.slots[10], self.slots[9], self.slots[8], self.slots[7]);
-        println!("{}             {}", self.slots[13], self.slots[6]);
-        println!("  {} {} {} {} {} {}  ", self.slots[0], self.slots[1], self.slots[2], self.slots[3], self.slots[4], self.slots[5]);
-        println!("Turn: Player {:?}", self.turn);
-        println!("Evaluation at depth 0: {}", self.evaluate());
-        println!("");
+fn bin(n: u64, k: u64) -> u64 {
+    if n > 64 || k > n {
+        panic!("{}, {}", n, k);
     }
+    unsafe {
+        return lookup[(n as usize * MAX) + k as usize];
+    }
+}
 
-    fn evaluate(&self) -> i32 {
-        let mut value = self.slots[6] as i32 - self.slots[13] as i32;
-        if self.game_over {
-            if value > 0 {
-                value += 50;
-            }
-            else {
-                value -= 50;
-            }
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
+
+#[derive(Debug, Clone)]
+pub struct DatabaseEntry {
+    pub player_1_evaluation: u32,
+    pub player_2_evaluation: i8,
+}
+
+pub struct EndgameDatabase {
+    // database for each stone
+    database: Vec<DatabaseEntry>,
+    // indices into the above database, see 'get' function
+    indices: Vec<usize>,
+}
+
+impl EndgameDatabase {
+    pub fn new(max_stones: u32) -> EndgameDatabase {
+        // TODO make num_slots a compile time constant
+        let mut sum = 0;
+        let mut indices = vec![0; max_stones as usize + 2];
+        for i in 2..(max_stones + 2) {
+            indices[i as usize] = sum;
+            sum += get_number_positions_partial(i, 12) as usize;;
         }
-        return value;
-    }
-}
 
-fn half_clone_position(position: &Position, child_position: &mut Position) {
-    child_position.slots = position.slots.clone();
-    child_position.game_over = position.game_over;
-}
-
-fn handle_game_over(child_position: &mut Position) {
-    // handle game over
-    let mut player_one_stones = 0;
-    for i in 0..6 {
-        player_one_stones += child_position.slots[i];
-    }
-
-    let mut player_two_stones = 0;
-    for i in 7..13 {
-        player_two_stones += child_position.slots[i];
-    }
-
-    if player_one_stones == 0 {
-        child_position.slots[13] += player_two_stones;
-        for i in 7..13 {
-            child_position.slots[i] = 0;
-        }
-        child_position.game_over = true;
-    }
-    else if player_two_stones == 0 {
-        child_position.slots[6] += player_one_stones;
-        for i in 0..6 {
-            child_position.slots[i] = 0;
-        }
-        child_position.game_over = true;
-    }
-}
-
-// move index will be between 0 and 5 inclusive
-fn player_one_move_stones(child_position: &mut Position, move_index: usize) -> usize {
-    // take stones out of slot
-    let number_stones = child_position.slots[move_index];
-    child_position.slots[move_index] = 0;
-
-    for i in 0..13 {
-        // add stones for each loop around the board (usually 0)
-        child_position.slots[i] += number_stones / 13;
-        // then possibly add a stone for the remainder
-        // could make this branchless
-        if (i + 12 - move_index) % 13 < number_stones as usize % 13 {
-            child_position.slots[i] += 1;
+        EndgameDatabase {
+            database: vec![DatabaseEntry {
+                player_1_evaluation: 0,
+                player_2_evaluation: 0,
+            }; sum],
+            indices: indices.clone(),
         }
     }
 
-    return (move_index + number_stones as usize) % 13;
-}
-
-// move index will be between 7 and 12 inclusive
-fn player_two_move_stones(child_position: &mut Position, move_index: usize) -> usize {
-    // take stones out of slot
-    let number_stones = child_position.slots[move_index];
-    child_position.slots[move_index] = 0;
-
-    // need to skip slot 6 so do this in 2 loops
-    for i in 0..6 {
-        // add stones for each loop around the board (usually 0)
-        child_position.slots[i] += number_stones / 13;
-        // then possibly add a stone for the remainder
-        if (i + 13 - move_index) % 13 < number_stones as usize % 13 {
-            child_position.slots[i] += 1;
-        }
-    }
-
-    // skip slot 6 and include slot 13
-    for i in 7..14 {
-        // add stones for each loop around the board (usually 0)
-        child_position.slots[i] += number_stones / 13;
-        // then possibly add a stone for the remainder
-        if (i + 12 - move_index) % 13 < number_stones as usize % 13 {
-            child_position.slots[i] += 1;
-        }
-    }
-
-    // this is a way to find the final slot while skipping slot 6
-    return (7 + (move_index - 7 + number_stones as usize) % 13) % 14;
-}
-
-fn move_stones(child_position: &mut Position, move_index: usize, opponent_goal: usize) -> usize {
-    // take stones out of slot
-    let mut number_stones = child_position.slots[move_index];
-    child_position.slots[move_index] = 0;
-
-    // start here...
-    let mut slot_index = move_index;
-    // ...and add stones 1 by 1 to slots
-    while number_stones > 0 {
-        number_stones -= 1;
-        slot_index += 1;
-        // but skip the opponent's goal
-        if slot_index == opponent_goal {
-            slot_index += 1;
-        }
-        slot_index %= 14;
-        child_position.slots[slot_index] += 1;
-    }
-
-    return slot_index;
-}
-
-fn player_one_handle_final_slot(child_position: &mut Position, final_slot_index: usize, player_goal: usize) -> bool {
-    let mut capture_ocurred = false;
-
-    // if it landed in the player's goal, give them another turn,
-    // but if not, test if they capture the enemy stones
-    if final_slot_index != player_goal {
-        child_position.turn = Player::Two;
-        // test if the final slot is on the player's side
-        if final_slot_index < player_goal {
-            // test if the final slot is empty
-            if child_position.slots[final_slot_index] == 0 {
-                // if so, capture those stones
-                let opposite_slot = 12 - final_slot_index;
-                child_position.slots[player_goal] += child_position.slots[opposite_slot];
-                child_position.slots[opposite_slot] = 0;
-                capture_ocurred = true;
-            }
-        }
-    }
-    else {
-        child_position.turn = Player::One;
-    }
-
-    return capture_ocurred;
-}
-
-fn player_two_handle_final_slot(child_position: &mut Position, final_slot_index: usize, player_goal: usize) -> bool {
-    let mut capture_ocurred = false;
-
-    // if it landed in the player's goal, give them another turn,
-    // but if not, test if they capture the enemy stones
-    if final_slot_index != player_goal {
-        child_position.turn = Player::One;
-        // test if the final slot is on the player's side
-        if final_slot_index < player_goal {
-            // test if the final slot is empty
-            if child_position.slots[final_slot_index] == 0 {
-                // if so, capture those stones
-                let opposite_slot = 12 - final_slot_index;
-                child_position.slots[player_goal] += child_position.slots[opposite_slot];
-                child_position.slots[opposite_slot] = 0;
-                capture_ocurred = true;
-            }
-        }
-    }
-    else {
-        child_position.turn = Player::Two;
-    }
-
-    return capture_ocurred;
-}
-
-fn player_one_make_move(position: &Position, child_position: &mut Position, move_index: usize) {
-    // deep copy position
-    half_clone_position(position, child_position);
-
-    // get the goal indices for later
-    let player_goal = 6;
-
-    // where did the final stone land?
-    let final_slot_index = player_one_move_stones(child_position, move_index);
-    let capture_ocurred = player_one_handle_final_slot(child_position, final_slot_index, player_goal);
-
-    // these are the only ways the game can end on player one's turn
-    if move_index == 5 || capture_ocurred {
-        handle_game_over(child_position);
-    }
-}
-
-fn player_two_make_move(position: &Position, child_position: &mut Position, move_index: usize) {
-    // deep copy position
-    half_clone_position(position, child_position);
-
-    // get the goal indices for later
-    let player_goal = 13;
-
-    // where did the final stone land?
-    let final_slot_index = player_two_move_stones(child_position, move_index);
-    let capture_ocurred = player_two_handle_final_slot(child_position, final_slot_index, player_goal);
-
-    // these are the only ways the game can end on player two's turn
-    if move_index == 12 || capture_ocurred {
-        handle_game_over(child_position);
-    }
-}
-
-fn get_move_order_player_one(position: &Position, move_order: &mut [usize; 6]) {
-    let mut priority_index = 0;
-
-    for i in 0..6 {
-        // if playing this move gives another turn
-        if i as u32 + position.slots[i] == 6 {
-            move_order[priority_index] = i;
-            priority_index += 1;
+    pub fn get(&self, num_stones: u32, index: usize) -> &DatabaseEntry {
+        if self.indices[num_stones as usize] + index < self.indices[num_stones as usize + 1] {
+            return &self.database[self.indices[num_stones as usize] + index];
         }
         else {
-            move_order[5 + priority_index - i] = i;
+            panic!("range error")
         }
     }
 
-}
+    pub fn calculate_endgames(&mut self, num_stones: u32, num_threads: u32) {
+        let slots = 12;
+        let batch_size = 2;
 
-fn get_move_order_player_two(position: &Position, move_order: &mut [usize; 6]) {
-    let mut priority_index = 0;
-    for i in 7..13 {
-        // if playing this move gives another turn
-        if i as u32 + position.slots[i] == 13 {
-            move_order[priority_index] = i;
-            priority_index += 1;
-        }
-        else {
-            move_order[12 + priority_index - i] = i;
-        }
-    }
-}
+        // for each stone
+        for i in 2..(num_stones + 1) {
+            println!("Number of stones: {i}");
 
-fn minimax(
-    position: &Position, 
-    depth: u32, 
-    mut alpha: i32, 
-    mut beta: i32) -> i32 {
+            let num_positions = get_number_positions_partial(i, slots) as usize;
+            println!("Number of positions: {num_positions}");
 
-    //position.print();
+            // create the new database (could assign max memory once but would lose bounds checking)
+            let mut new_database = vec![DatabaseEntry {
+                player_1_evaluation: 0,
+                player_2_evaluation: 0,
+            }; num_positions];
+            // this mutex is a good point to optimise but going to leave it for now in favour of getting something working
+            // could only lock when a batch finishes or just accept some unsafe code
+            let new_database_arc = Arc::new(Mutex::new(new_database));
 
-    if depth == 0 || position.game_over {
-        return position.evaluate();
-    }
+            // atomic for counting how many positions have been handled
+            let arc_atomic = Arc::new(AtomicUsize::new(0));
 
-    // default initialisation
-    let mut child_position = Position {
-        slots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        turn: Player::One,
-        game_over: false,
-    };
-
-    match position.turn {
-        Player::One => {
-            let mut value = -1 * INF;
-            
-            let mut move_order: [usize; 6] = [5, 4, 3, 2, 1, 0];
-            get_move_order_player_one(position, &mut move_order);
-            for move_index in move_order {
-                //let move_index = 5 - i;
-                if position.slots[move_index] == 0 {
-                    continue
+            // self is immutably borrowed for the duration of this scope
+            thread::scope(|scope| {
+                println!("Spawning {num_threads} threads");
+                for _ in 0..num_threads {
+                    scope.spawn(|| {
+                        // get next position and add 1 to mark as processing
+                        let mut position_index = arc_atomic.fetch_add(batch_size, Ordering::SeqCst);
+                        while position_index < num_positions as usize {
+                            
+                            self.analyse_batch(position_index, batch_size as u32, i, &new_database_arc);
+                            //println!("{position_index}");
+                            position_index = arc_atomic.fetch_add(batch_size, Ordering::SeqCst);
+                        }
+                    });
                 }
-                // make each move and store each result in child_position
-                player_one_make_move(&position, &mut child_position, move_index);
-                // get next position in opening tree
-                //let next_node = opening_tree.get_child(current_node, move_index);
-                // recursively evaluate the child position
-                value = max(minimax(&child_position, depth - 1, alpha, beta), value);
+            });
+            println!("Threads joined");
+            // we can now mutate self
 
-                alpha = max(alpha, value);
+            // consume the lock
+            let lock = Arc::into_inner(new_database_arc).unwrap();
+            let database = Mutex::into_inner(lock).unwrap();
 
-                if value >= beta {
+            // copy the database over
+            let offset = self.indices[i as usize];
+            for i in 0..database.len() {
+                self.database[offset + i] = database[i].clone();
+            }
+        }
+    }
+
+    fn analyse_batch(&self, start_index: usize, num_positions: u32, max_stones: u32, database: &Arc<Mutex<Vec<DatabaseEntry>>>) {
+        let mut position = vec![0; 12];
+        position_from_index(start_index as u32, &mut position, max_stones);
+        let mut index = start_index;
+        let final_index = start_index + num_positions as usize;
+        if index < final_index {
+            loop  {
+                //println!("{:?}", position);
+                let mut data = database.lock().unwrap();
+                (*data)[index].player_1_evaluation = index_from_position(&position, max_stones);
+                (*data)[index].player_2_evaluation = max_stones as i8;
+                if index == 364 {
+                    println!("test: {:?}", position);
+                }
+                index += 1;
+                if !(index < final_index && get_next_position(&mut position)) {
                     break;
                 }
             }
-
-            return value;
-        }
-        Player::Two => {
-            let mut value = INF;
-
-            let mut move_order: [usize; 6] = [5, 4, 3, 2, 1, 0];
-            get_move_order_player_two(position, &mut move_order);
-            for move_index in move_order {
-                //let move_index = 12 - i;
-                if position.slots[move_index] == 0 {
-                    continue
-                }
-                // make each move and store each result in child_position
-                player_two_make_move(&position, &mut child_position, move_index);
-                // recursively evaluate the child position
-                value = min(minimax(&child_position, depth - 1, alpha, beta), value);
-
-                beta = min(beta, value);
-
-                if value <= alpha {
-                    break;
-                }
-            }
-
-            return value;
         }
     }
-}
-
-fn analyse(depth: u32) {
-    println!("Depth: {}", depth);
-    let now = Instant::now();
-
-    let position = Position {
-        slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
-        turn: Player::One,
-        game_over: false,
-    };
-
-    let evaluation = minimax(&position, depth, -1 * INF, INF);
-    let time = now.elapsed().as_millis();
-    println!("Evaluation: {}", evaluation);
-    // it prints '2'
-    println!("{}ms\n", time);
-}
-
-fn mtdf_test(max_depth: u32) {
-    let mut depth = 2;
-    while depth <= max_depth {
-        let now = Instant::now();
-
-        let position = Position {
-            slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
-            turn: Player::One,
-            game_over: false,
-        };
-
-        let evaluation = minimax(&position, depth, -1 * INF, INF);
-        let time = now.elapsed().as_millis();
-        println!("Evaluation: {}, depth: {}, time: {}ms", evaluation, depth, time);
-        depth += 2;
-    }
-}
-
-// fn test_all_moves() {
-//     let mut child_position_1 = Position {
-//         slots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-//         turn: Player::One,
-//         game_over: false,
-//     };
-//     let mut child_position_2 = Position {
-//         slots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-//         turn: Player::One,
-//         game_over: false,
-//     };
-
-//     println!("Testing...");
-//     let now = Instant::now();
     
-//     // test player 1 moves
-//     for number_stones in 1..49 {
-//         for move_index in 0..6 {
-//             child_position_1.slots[move_index] = number_stones;
-//             child_position_2.slots[move_index] = number_stones;
-//             let final_slot_index_1 = move_stones(&mut child_position_1, move_index, 13);
-//             let final_slot_index_2 = player_one_move_stones(&mut child_position_2, move_index);
+}
 
-//             let mut diff = false;
-//             for i in 0..14 {
-//                 if child_position_1.slots[i] != child_position_2.slots[i] {
-//                     diff = true;
-//                     break;
-//                 }
-//             }
+// get the number of positions which have this number of stones and slots (for table with n or fewer stones)
+fn get_number_positions_full(stones: u32, slots: u32) -> u32 {
+    // TODO
+    let num_positions = binomial(stones + slots, slots);
+    println!("num positions: {}", num_positions);
+    return num_positions;
+}
 
-//             if diff ||
-//                final_slot_index_1 != final_slot_index_2 ||
-//                child_position_1.turn != child_position_2.turn ||
-//                child_position_1.game_over != child_position_2.game_over {
-//                 println!("Move {}, stones {}\n", move_index, number_stones);
-//                 println!("final_slot_index_1 {}, final_slot_index_2 {}\n", final_slot_index_1, final_slot_index_2);
-//                 println!("turn 1 {:?}, turn 2 {:?}\n", child_position_1.turn, child_position_2.turn);
-//                 println!("game_over 1 {}, game_over 2 {}\n", child_position_1.game_over, child_position_2.game_over);
-//                 child_position_1.print();
-//                 child_position_2.print();
-//                 panic!();
-//             }
+// get the number of positions which have this number of stones and slots (for table with exactly n stones)
+fn get_number_positions_partial(stones: u32, slots: u32) -> u32 {
+    // TODO
+    binomial(stones + slots - 1, slots - 1)
+}
 
-//             for i in 0..14 {
-//                 child_position_1.slots[i] = 0;
-//                 child_position_2.slots[i] = 0;
-//             }
-            
-//         }
 
-//         child_position_1.turn = Player::Two;
-//         child_position_2.turn = Player::Two;
+fn position_from_index(index: u32, position: &mut Vec<u32>, max_stones: u32) {
+    // clear position
+    let length = position.len();
+    position.clear();
+    position.resize(length, 0);
 
-//         for move_index in 7..13 {
-//             child_position_1.slots[move_index] = number_stones;
-//             child_position_2.slots[move_index] = number_stones;
-//             let final_slot_index_1 = move_stones(&mut child_position_1, move_index, 6);
-//             let final_slot_index_2 = player_two_move_stones(&mut child_position_2, move_index);
+    //println!("index: {}", index);
 
-//             let mut diff = false;
-//             for i in 0..14 {
-//                 if child_position_1.slots[i] != child_position_2.slots[i] {
-//                     diff = true;
-//                     break;
-//                 }
-//             }
+    let mut position_index = 0;
+    let mut min_guess = 0;
+    let mut max_guess = max_stones + 1;
+    let mut guess = 0;
+    let mut remaining_stones = max_stones;
 
-//             if diff ||
-//                final_slot_index_1 != final_slot_index_2 ||
-//                child_position_1.turn != child_position_2.turn ||
-//                child_position_1.game_over != child_position_2.game_over {
-//                 println!("Move {}, stones {}\n", move_index, number_stones);
-//                 println!("final_slot_index_1 {}, final_slot_index_2 {}\n", final_slot_index_1, final_slot_index_2);
-//                 println!("turn 1 {:?}, turn 2 {:?}\n", child_position_1.turn, child_position_2.turn);
-//                 println!("game_over 1 {}, game_over 2 {}\n", child_position_1.game_over, child_position_2.game_over);
-//                 child_position_1.print();
-//                 child_position_2.print();
-//                 panic!();
-//             }
+    // search through all but the final index
+    while position_index < length - 1 {
+        // binary search
+        guess = (max_guess + min_guess) / 2;
+        position[position_index] = guess;
 
-//             for i in 0..14 {
-//                 child_position_1.slots[i] = 0;
-//                 child_position_2.slots[i] = 0;
-//             }
-//         }
-//     }
+        // put any remaining stones in the last slot
+        position[length - 1] = remaining_stones - guess;
 
-//     let time = now.elapsed().as_millis();
-//     println!("{}ms\n", time);
-// }
+        //println!("guess: {guess}, ({min_guess}-{max_guess})");
+        //println!("{:?}", position);
+
+        // get the index of this guessed position
+        let index_guess = index_from_position(&position, max_stones);
+        //println!("index_guess: {index_guess} (index: {index})");
+
+        
+        if index_guess == index {
+            // index is correct
+            //println!("index: {}", index);
+            return;
+        }
+        else if index_guess > index {
+            // index_guess is too large, need to increase the guess
+            min_guess = guess;
+        }
+        else {
+            // index_guess is too small, need to reduce the guess
+            max_guess = guess;
+        }
+
+        if max_guess - min_guess == 1 {
+            // if we have narrowed our search to here then the answer is between min and max, 
+            // set this position to min and move to the next index
+            //println!("Setting position index {position_index} to {min_guess}");
+            position[position_index] = min_guess;
+            position_index += 1;
+            remaining_stones -= min_guess;
+            max_guess = remaining_stones + 1;
+            min_guess = 0;
+        }
+    }
+
+    // put any remaining stones in the final slot
+    position[length - 1] = remaining_stones;
+
+    // double check the result
+    if index_from_position(&position, max_stones) != index {
+        println!("{:?}", position);
+        panic!("index != guess");
+    }
+}
+
+fn index_from_position(position: &Vec<u32>, max_stones: u32) -> u32 {
+    //println!("index_from_position");
+    let mut remaining_n: u32 = max_stones;
+    let mut remaining_depth = position.len() as u32;
+
+    let mut index: u32 = 0;
+
+    for i in position {
+        if remaining_n == *i {
+            break;
+        }
+        remaining_depth -= 1;
+        remaining_n -= i;
+        let n = (remaining_depth + remaining_n - 1) as u64;
+        let k = (remaining_depth) as u64;
+        index += bin(n, k) as u32;
+        
+        //println!("n: {n}, k: {k}, remaining_depth: {remaining_depth}, remaining_n: {remaining_n}, index: {index}");
+    }
+
+    return index;
+}
+
+// returns false if there was no change
+fn get_next_position(position: &mut Vec<u32>) -> bool {
+    let len = position.len();
+    let mut changed = false;
+
+    // work backwards through list starting from list[-2]
+    for j in 2..(len + 1) {
+        // if this element is non-zero
+        if position[len - j] != 0 {
+            changed = true;
+            // sub one from this element and move it to the next
+            position[len - j] -= 1;
+            position[len - j + 1] += 1;
+
+            // last element should be made 0, unless we just added to it (ie if j = 2)
+            let end = position[len - 1];
+            position[len - j + 1] += end;
+            position[len - 1] -= end;
+
+            break;
+        }
+    }
+
+    return changed;
+}
+
+fn threading_test(mut data: Vec<usize>) -> Vec<usize> {
+    // want the vec of vecs to be an array of slices
+    // take some mutable data
+    //let mut data = vec![0; 1];
+    let mut data_2: Vec<Vec<u32>> = vec![vec![0; 1]; 1];
+    // let mut data = vec![0;3];
+    for i in 0..2 {
+        // move ownership of the data in to an Arc
+        let mut arc_data = Arc::new(data);
+        let mut arc_data_2 = Arc::new(data_2);
+        let mut handles = vec![];
+
+        // spawn and run all the threads with read only access to the data
+        for _ in 0..3 {
+            let arc_data = Arc::clone(&arc_data);
+            let arc_data_2 = Arc::clone(&arc_data_2);
+            let handle = thread::spawn(move || {
+                // data isn't mutable here
+                //arc_data[i] = 0;
+                if arc_data[i] == i {
+                    println!("yay");
+                }
+
+                if arc_data_2[i][0] == 0 {
+                    println!("yay 2");
+                }
+            });
+            handles.push(handle);
+        }
+
+        // join all the threads
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // data would not be mutable yet
+        //data.push(i + 1);
+
+        // move ownership of the data out of the Arc
+        data = Arc::try_unwrap(arc_data).unwrap();
+        // data is now mutable again
+        data.push(i + 1);
+
+        data_2 = Arc::try_unwrap(arc_data_2).unwrap();
+        data_2.push(vec![0;1]);
+    }
+
+    println!("Result: {:?}", data);
+    println!("Result: {:?}", data_2);
+
+    return data;
+}
+
+fn all_positions(position: &mut Vec<u32>, depth: usize, remaining: u32, position_table: &mut Vec<[u32;12]>, ref_table: &mut Vec<u32>) {
+    // if we have reached the last slot
+    if depth == position.len() - 1 {
+        position[depth] = remaining;
+        // get index
+        let max_stones = position.iter().sum();
+        let index = index_from_position(&position, max_stones) as usize;
+        // add to table
+        ref_table[index] += 1;
+        for i in 0..position.len() {
+            position_table[index][i] = position[i];
+        }
+    }
+    else {
+        // for stones 0 to 'remaining' (inclusive)
+        for i in 0..(remaining + 1) {
+            position[depth] = i;
+            all_positions(position, depth + 1, remaining - i, position_table, ref_table);
+        }
+        
+    }
+
+    // reset this slot (may not be needed)
+    position[depth] = 0;
+}
+
+// for each position:
+//  generate an index
+//  store the position in an array at that index
+// for each index
+//  generate a position
+//  get the position from the array and check it matches the generated one
+fn check_indexing() {
+    // go through each position and add it to the table
+    for max_stones in 0..20 {
+        println!("Max stones: {max_stones}");
+        let num_slots = 12;
+        let num_positions = get_number_positions_partial(max_stones, num_slots);
+
+        let mut position = vec![0 as u32; num_slots as usize];
+        let mut position_table = vec![[0 as u32; 12]; num_positions as usize];
+        let mut ref_table = vec![0 as u32; num_positions as usize];
+        all_positions(&mut position, 0 as usize, max_stones, &mut position_table, &mut ref_table);
+
+        for i in 0..num_positions {
+            position_from_index(i, &mut position, max_stones);
+            let test_position = position_table[i as usize];
+            let test_ref = ref_table[i as usize];
+
+            // test every position is seen once
+            if test_ref != 1 {
+                println!("{i}: {test_ref}");
+            }
+
+            // test every index contains the correct position
+            for i in 0..test_position.len() {
+                if test_position[i] != position[i] {
+                    println!("{i}: {:?}", test_position);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ThreadedData<'a> {
+    pub data: Vec<u32>,
+    pub slices: Vec<&'a [u32]>,
+}
+
+impl<'a> ThreadedData<'a> {
+    pub fn threading_test_3(&mut self) {
+        
+        for i in 0..2 {
+            // self is immutably borrowed for the duration of this scope
+            thread::scope(|scope| {
+                for _ in 0..3 {
+                    scope.spawn(|| {
+                        if self.slices[0][i] == 0 {
+                            println!("yay 2");
+                        }
+                    });
+                }
+            });
+
+            // we can now mutate self
+            self.data.push(i as u32 + 1);
+        }
+    }
+}
 
 fn main() {
-    let depth: u32 = 30;
-    let mut start_game_state = mancala::MancalaGameState {
-        slots: [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0],
-        turn: minimax::Player::One,
-        game_over: false,
-    };
-    let mut solver = minimax::Solver {
-        start_game_state: &mut start_game_state,
-        depth: depth,
-    };
-    solver.solve();
 
-    mtdf_test(depth);
+    for i in 0..MAX {
+        for j in 0..MAX {
+            unsafe {
+                lookup[i * MAX + j] = binomial(i as u64, j as u64);
+            }
+        }
+    }
+
+    let num_threads = 1;
+    let num_stones = 4;
+    let num_slots = 12;
+    let mut endgame_database = EndgameDatabase::new(num_stones);
+    endgame_database.calculate_endgames(num_stones, num_threads);
+
+    let mut offset = 0;
+    for i in 0..(endgame_database.indices.len() - 1) {
+        //println!("{}", endgame_database.indices[i]);
+        for j in 0..endgame_database.indices[i] {
+            let entry = &endgame_database.database[offset + j];
+            if entry.player_1_evaluation != j as u32 || entry.player_2_evaluation != 1 {
+                println!("{i}, {j}, {:?}", entry);
+            }
+        }
+        offset = endgame_database.indices[i];
+    }
+
+    for e in endgame_database.database {
+        //println!("{:?}", e);
+    }
+
 }
