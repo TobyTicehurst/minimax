@@ -1,302 +1,179 @@
-//mod minimax;
-use crate::minimax::Player;
 use crate::minimax::GameState;
 
-const SLOTS_PER_SIDE: usize = 6;
-const TOTAL_SLOTS: usize = SLOTS_PER_SIDE * 2 + 2;
-//const STONES_PER_SLOT: u32 = 4;
+const PITS_PER_SIDE: usize = 6;
+const TOTAL_PITS: usize = PITS_PER_SIDE * 2 + 2;
+//const STONES_PER_PIT: u32 = 4;
+const PLAYER_1_STORE: usize = PITS_PER_SIDE;
+const PLAYER_2_STORE: usize = PITS_PER_SIDE * 2 + 1;
 
+const PLAYER_1: bool = true;
+//const PLAYER_2: bool = !PLAYER_1;
+
+const PLAYER_1_PITS: std::ops::Range<usize> = 0..PLAYER_1_STORE;
+const PLAYER_2_PITS: std::ops::Range<usize> = (PLAYER_1_STORE + 1)..PLAYER_2_STORE;
+
+const DEFAULT_STARTING_POSITION: [u32; TOTAL_PITS] = [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0];
+
+#[derive(Copy, Clone, Debug)]
 pub struct MancalaGameState {
     // number of stones in each slot
-    pub slots: [u32; TOTAL_SLOTS],
+    pub pits: [u32; TOTAL_PITS],
     // who's turn is it next
-    pub turn: Player,
+    pub turn: bool,
     pub game_over: bool,
 }
 
-impl GameState for MancalaGameState {
-    type Move = usize;
-    
-    fn new() -> MancalaGameState {
-        MancalaGameState {
-            slots: [0; TOTAL_SLOTS],
-            turn: Player::One,
-            game_over: false,
-        }
-    }
-
-    fn make_move(&self, next_state: &mut MancalaGameState, player_move: usize) {
-        match self.get_turn() {
-            Player::One => self.player_one_make_move(next_state, player_move),
-            Player::Two => self.player_two_make_move(next_state, player_move),
-        }
-    }
-
-    fn get_move_order(&self) -> [usize; 6] {
-        let mut move_order: [usize; SLOTS_PER_SIDE] = [0; SLOTS_PER_SIDE];
-        match self.get_turn() {
-            Player::One => self.get_move_order_player_one(&mut move_order),
-            Player::Two => self.get_move_order_player_two(&mut move_order),
-        }
-
-        return move_order;
-    }
-
+impl GameState<MancalaGameState> for MancalaGameState {
     fn heuristic(&self) -> i32 {
-        let mut value = self.slots[6] as i32 - self.slots[13] as i32;
+        let mut value = self.pits[6] as i32 - self.pits[13] as i32;
         if self.game_over {
             if value > 0 {
                 value += 50;
-            }
-            else {
+            } else {
                 value -= 50;
             }
         }
         return value;
     }
 
-    fn get_turn(&self) -> Player {
-        return self.turn;
-    }
-
     fn is_game_over(&self) -> bool {
         return self.game_over;
     }
 
-    fn is_move_valid(&self, player_move: usize) -> bool {
-        return self.slots[player_move] != 0;
+    fn is_maximising_player(&self) -> bool {
+        self.turn == PLAYER_1
     }
 
-    fn print(&self) {
-        println!("  {} {} {} {} {} {}  ", self.slots[12], self.slots[11], self.slots[10], self.slots[9], self.slots[8], self.slots[7]);
-        println!("{}             {}", self.slots[13], self.slots[6]);
-        println!("  {} {} {} {} {} {}  ", self.slots[0], self.slots[1], self.slots[2], self.slots[3], self.slots[4], self.slots[5]);
-        println!("Turn: Player {:?}", self.turn);
-        println!("Evaluation at depth 0: {}", self.heuristic());
-        println!("");
+    fn get_children(&self) -> Vec<MancalaGameState> {
+        let mut children: Vec<MancalaGameState> = Vec::new();
+        let players_pits;
+        let players_store;
+        let opponents_store;
+
+        if self.turn == PLAYER_1 {
+            players_pits = PLAYER_1_PITS;
+            players_store = PLAYER_1_STORE;
+            opponents_store = PLAYER_2_STORE;
+        } else {
+            players_pits = PLAYER_2_PITS;
+            players_store = PLAYER_2_STORE;
+            opponents_store = PLAYER_1_STORE;
+        }
+
+        for player_move in players_pits {
+            // if this is a valid move
+            if self.pits[player_move] > 0 {
+                let mut child = self.clone();
+                child.make_move(player_move, players_store, opponents_store);
+                children.push(child);
+            }
+        }
+
+        children.reverse();
+        children
     }
 }
 
 impl MancalaGameState {
-    // TODO turn this into Copy()
-    fn half_clone_position(&self, child_game_state: &mut MancalaGameState) {
-        child_game_state.slots = self.slots.clone();
-        child_game_state.game_over = self.game_over;
+    pub fn new() -> MancalaGameState {
+        MancalaGameState {
+            pits: [0; TOTAL_PITS as usize],
+            turn: PLAYER_1,
+            game_over: false,
+        }
+    }
+
+    pub fn default() -> MancalaGameState {
+        MancalaGameState {
+            pits: DEFAULT_STARTING_POSITION,
+            turn: PLAYER_1,
+            game_over: false,
+        }
+    }
+
+    fn print(&self) {
+        println!(
+            "  {} {} {} {} {} {}  ",
+            self.pits[12], self.pits[11], self.pits[10], self.pits[9], self.pits[8], self.pits[7]
+        );
+        println!("{}             {}", self.pits[13], self.pits[6]);
+        println!(
+            "  {} {} {} {} {} {}  ",
+            self.pits[0], self.pits[1], self.pits[2], self.pits[3], self.pits[4], self.pits[5]
+        );
+        println!("Turn: Player {:?}", self.turn);
+        println!("Evaluation at depth 0: {}", self.heuristic());
+        println!("");
     }
 
     fn handle_game_over(&mut self) {
         // handle game over
         let mut player_one_stones = 0;
-        for i in 0..6 {
-            player_one_stones += self.slots[i];
+        for i in PLAYER_1_PITS {
+            player_one_stones += self.pits[i];
         }
 
         let mut player_two_stones = 0;
-        for i in 7..13 {
-            player_two_stones += self.slots[i];
+        for i in PLAYER_2_PITS {
+            player_two_stones += self.pits[i];
         }
 
         if player_one_stones == 0 {
-            self.slots[13] += player_two_stones;
-            for i in 7..13 {
-                self.slots[i] = 0;
+            self.pits[PLAYER_2_STORE] += player_two_stones;
+            for i in PLAYER_2_PITS {
+                self.pits[i] = 0;
+            }
+            self.game_over = true;
+        } else if player_two_stones == 0 {
+            self.pits[PLAYER_1_STORE] += player_one_stones;
+            for i in PLAYER_1_PITS {
+                self.pits[i] = 0;
             }
             self.game_over = true;
         }
-        else if player_two_stones == 0 {
-            self.slots[6] += player_one_stones;
-            for i in 0..6 {
-                self.slots[i] = 0;
-            }
-            self.game_over = true;
-        }
     }
 
-    // move index will be between 0 and 5 inclusive
-    fn player_one_move_stones(&mut self, player_move: usize) -> usize {
-        // take stones out of slot
-        let number_stones = self.slots[player_move];
-        self.slots[player_move] = 0;
+    // moves stones and returns the final pit played in to
+    fn move_stones(&mut self, player_move: usize, opponents_store: usize) -> usize {
+        // take stones out of the chosen pit
+        let number_of_stones: u32 = self.pits[player_move];
+        self.pits[player_move] = 0;
 
-        for i in 0..13 {
-            // add stones for each loop around the board (usually 0)
-            self.slots[i] += number_stones / 13;
-            // then possibly add a stone for the remainder
-            // could make this branchless
-            if (i + 12 - player_move) % 13 < number_stones as usize % 13 {
-                self.slots[i] += 1;
+        // add the remaining stones to each pit (except the opponent's store)
+        let mut current_pit = player_move + 1;
+        for _ in 0..number_of_stones {
+            // skip the opponent's store
+            if current_pit % TOTAL_PITS == opponents_store {
+                current_pit += 1;
             }
+            self.pits[current_pit % TOTAL_PITS] += 1;
+            current_pit += 1;
         }
 
-        return (player_move + number_stones as usize) % 13;
+        // return the final pit played to
+        return current_pit % TOTAL_PITS;
     }
 
-    // move index will be between 7 and 12 inclusive
-    fn player_two_move_stones(&mut self, player_move: usize) -> usize {
-        // take stones out of slot
-        let number_stones = self.slots[player_move];
-        self.slots[player_move] = 0;
+    fn make_move(&mut self, player_move: usize, players_store: usize, opponents_store: usize) {
+        let final_pit = self.move_stones(player_move, opponents_store);
 
-        // need to skip slot 6 so do this in 2 loops
-        for i in 0..6 {
-            // add stones for each loop around the board (usually 0)
-            self.slots[i] += number_stones / 13;
-            // then possibly add a stone for the remainder
-            if (i + 13 - player_move) % 13 < number_stones as usize % 13 {
-                self.slots[i] += 1;
+        // if another turn is not granted (see rules)
+        if final_pit != players_store {
+            self.turn = !self.turn;
+
+            // if a capture occurs (see capturing rules)
+            if final_pit < players_store && self.pits[player_move] == 1 {
+                // capture stones in the opposite pit
+                let opposite_pit = TOTAL_PITS - 2 - player_move;
+                let stones_to_capture = self.pits[opposite_pit];
+                self.pits[opposite_pit] = 0;
+
+                // move those stones to the player's store
+                self.pits[players_store] += stones_to_capture;
             }
         }
 
-        // skip slot 6 and include slot 13
-        for i in 7..14 {
-            // add stones for each loop around the board (usually 0)
-            self.slots[i] += number_stones / 13;
-            // then possibly add a stone for the remainder
-            if (i + 12 - player_move) % 13 < number_stones as usize % 13 {
-                self.slots[i] += 1;
-            }
-        }
-
-        // this is a way to find the final slot while skipping slot 6
-        return (7 + (player_move - 7 + number_stones as usize) % 13) % 14;
-    }
-
-    // fn move_stones(&mut self, player_move: usize, opponent_goal: usize) -> usize {
-    //     // take stones out of slot
-    //     let mut number_stones = self.slots[player_move];
-    //     self.slots[player_move] = 0;
-
-    //     // start here...
-    //     let mut slot_index = player_move;
-    //     // ...and add stones 1 by 1 to slots
-    //     while number_stones > 0 {
-    //         number_stones -= 1;
-    //         slot_index += 1;
-    //         // but skip the opponent's goal
-    //         if slot_index == opponent_goal {
-    //             slot_index += 1;
-    //         }
-    //         slot_index %= 14;
-    //         self.slots[slot_index] += 1;
-    //     }
-
-    //     return slot_index;
-    // }
-
-    fn player_one_handle_final_slot(&mut self, final_slot_index: usize, player_goal: usize) -> bool {
-        let mut capture_ocurred = false;
-
-        // if it landed in the player's goal, give them another turn,
-        // but if not, test if they capture the enemy stones
-        if final_slot_index != player_goal {
-            self.turn = Player::Two;
-            // test if the final slot is on the player's side
-            if final_slot_index < player_goal {
-                // test if the final slot is empty
-                if self.slots[final_slot_index] == 0 {
-                    // if so, capture those stones
-                    let opposite_slot = 12 - final_slot_index;
-                    self.slots[player_goal] += self.slots[opposite_slot];
-                    self.slots[opposite_slot] = 0;
-                    capture_ocurred = true;
-                }
-            }
-        }
-        else {
-            self.turn = Player::One;
-        }
-
-        return capture_ocurred;
-    }
-
-    fn player_two_handle_final_slot(&mut self, final_slot_index: usize, player_goal: usize) -> bool {
-        let mut capture_ocurred = false;
-
-        // if it landed in the player's goal, give them another turn,
-        // but if not, test if they capture the enemy stones
-        if final_slot_index != player_goal {
-            self.turn = Player::One;
-            // test if the final slot is on the player's side
-            if final_slot_index < player_goal {
-                // test if the final slot is empty
-                if self.slots[final_slot_index] == 0 {
-                    // if so, capture those stones
-                    let opposite_slot = 12 - final_slot_index;
-                    self.slots[player_goal] += self.slots[opposite_slot];
-                    self.slots[opposite_slot] = 0;
-                    capture_ocurred = true;
-                }
-            }
-        }
-        else {
-            self.turn = Player::Two;
-        }
-
-        return capture_ocurred;
-    }
-
-    fn player_one_make_move(&self, child_position: &mut MancalaGameState, player_move: usize) {
-        // deep copy position
-        self.half_clone_position(child_position);
-    
-        // get the goal indices for later
-        let player_goal = 6;
-    
-        // where did the final stone land?
-        let final_slot_index = child_position.player_one_move_stones(player_move);
-        
-        let capture_ocurred = child_position.player_one_handle_final_slot(final_slot_index, player_goal);
-    
-        // these are the only ways the game can end on player one's turn
-        if player_move == 5 || capture_ocurred {
-            child_position.handle_game_over();
-        }
-    }
-    
-    fn player_two_make_move(&self, child_position: &mut MancalaGameState, player_move: usize) {
-        // deep copy position
-        self.half_clone_position(child_position);
-    
-        // get the goal indices for later
-        let player_goal = 13;
-    
-        // where did the final stone land?
-        let final_slot_index = child_position.player_two_move_stones(player_move);
-        let capture_ocurred = child_position.player_two_handle_final_slot(final_slot_index, player_goal);
-    
-        // these are the only ways the game can end on player two's turn
-        if player_move == 12 || capture_ocurred {
-            child_position.handle_game_over();
-        }
-    }
-
-    fn get_move_order_player_one(&self, move_order: &mut [usize; 6]) {
-        let mut priority_index = 0;
-    
-        for i in 0..6 {
-            // if playing this move gives another turn
-            if i as u32 + self.slots[i] == 6 {
-                move_order[priority_index] = i;
-                priority_index += 1;
-            }
-            else {
-                move_order[5 + priority_index - i] = i;
-            }
-        }
-    }
-    
-    fn get_move_order_player_two(&self, move_order: &mut [usize; 6]) {
-        let mut priority_index = 0;
-        for i in 7..13 {
-            // if playing this move gives another turn
-            if i as u32 + self.slots[i] == 13 {
-                move_order[priority_index] = i;
-                priority_index += 1;
-            }
-            else {
-                move_order[12 + priority_index - i] = i;
-            }
-        }
+        // handle game over
+        self.handle_game_over();
     }
 }
-
