@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::minimax::GameState;
 
 const PITS_PER_SIDE: usize = 6;
@@ -14,7 +16,7 @@ const PLAYER_2_PITS: std::ops::Range<usize> = (PLAYER_1_STORE + 1)..PLAYER_2_STO
 
 const DEFAULT_STARTING_POSITION: [u32; TOTAL_PITS] = [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0];
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct MancalaGameState {
     // number of stones in each slot
     pub pits: [u32; TOTAL_PITS],
@@ -33,7 +35,7 @@ impl GameState<MancalaGameState> for MancalaGameState {
                 value -= 50;
             }
         }
-        return value;
+        value
     }
 
     fn is_game_over(&self) -> bool {
@@ -151,7 +153,7 @@ impl MancalaGameState {
         }
 
         // return the final pit played to
-        return current_pit % TOTAL_PITS;
+        return (current_pit - 1) % TOTAL_PITS;
     }
 
     fn make_move(&mut self, player_move: usize, players_store: usize, opponents_store: usize) {
@@ -162,9 +164,9 @@ impl MancalaGameState {
             self.turn = !self.turn;
 
             // if a capture occurs (see capturing rules)
-            if final_pit < players_store && self.pits[player_move] == 1 {
+            if final_pit < players_store && self.pits[final_pit] == 1 {
                 // capture stones in the opposite pit
-                let opposite_pit = TOTAL_PITS - 2 - player_move;
+                let opposite_pit = TOTAL_PITS - 2 - final_pit;
                 let stones_to_capture = self.pits[opposite_pit];
                 self.pits[opposite_pit] = 0;
 
