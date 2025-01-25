@@ -10,3 +10,16 @@ Players start with 4 stones in each pit. The first player to move is considered 
 4. If the final sowed stone is placed in the current player's store, the current player takes another turn. This can happen repeatedly.
 5. If rule 4 doesn't come into effect then play passes to the opponent.
 6. The game ends when a player has no stones left to move. The other player then moves all their stones into their store and whoever has the most stones in their store wins.
+
+== TODO ==
+
+1. Flame graph is showing reverse() as a potential candidate for optimisation
+2. smart_ordering() - will also solve the reverse issue
+3. Call handle_game_over() less if possible
+4. Implement Endgame database now that we can reach 30+ depth (average game is around 48 moves)
+
+== Flame Graph ==
+
+cargo flamegraph --release
+
+(Need to run as admin)
