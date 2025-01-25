@@ -39,15 +39,19 @@ impl GameState<MancalaGameState> for MancalaGameState {
     }
 
     fn is_game_over(&self) -> bool {
-        return self.game_over;
+        self.game_over
     }
 
     fn is_maximising_player(&self) -> bool {
         self.turn == PLAYER_1
     }
 
-    fn get_children(&self) -> Vec<MancalaGameState> {
-        let mut children: Vec<MancalaGameState> = Vec::new();
+    fn get_children<'a>(
+        &self,
+        children_memory: &'a mut Vec<MancalaGameState>,
+    ) -> &'a Vec<MancalaGameState> {
+        children_memory.clear();
+        let children: &mut Vec<MancalaGameState> = children_memory;
         let players_pits;
         let players_store;
         let opponents_store;
@@ -65,21 +69,29 @@ impl GameState<MancalaGameState> for MancalaGameState {
         for player_move in players_pits {
             // if this is a valid move
             if self.pits[player_move] > 0 {
-                let mut child = self.clone();
+                // copy self TODO - does this need to be a copy?
+                let mut child = *self;
                 child.make_move(player_move, players_store, opponents_store);
                 children.push(child);
             }
         }
 
+        // smart_reorder(&mut children);
         children.reverse();
         children
     }
 }
 
+// fn smart_reorder(children: &mut Vec<MancalaGameState>) {
+//     // first try any moves which result in a second turn
+//     // next try any moves which result in a capture
+//     // finally try any moves which
+// }
+
 impl MancalaGameState {
     pub fn new() -> MancalaGameState {
         MancalaGameState {
-            pits: [0; TOTAL_PITS as usize],
+            pits: [0; TOTAL_PITS],
             turn: PLAYER_1,
             game_over: false,
         }
@@ -91,21 +103,6 @@ impl MancalaGameState {
             turn: PLAYER_1,
             game_over: false,
         }
-    }
-
-    fn print(&self) {
-        println!(
-            "  {} {} {} {} {} {}  ",
-            self.pits[12], self.pits[11], self.pits[10], self.pits[9], self.pits[8], self.pits[7]
-        );
-        println!("{}             {}", self.pits[13], self.pits[6]);
-        println!(
-            "  {} {} {} {} {} {}  ",
-            self.pits[0], self.pits[1], self.pits[2], self.pits[3], self.pits[4], self.pits[5]
-        );
-        println!("Turn: Player {:?}", self.turn);
-        println!("Evaluation at depth 0: {}", self.heuristic());
-        println!("");
     }
 
     fn handle_game_over(&mut self) {
@@ -153,11 +150,13 @@ impl MancalaGameState {
         }
 
         // return the final pit played to
-        return (current_pit - 1) % TOTAL_PITS;
+        (current_pit - 1) % TOTAL_PITS
     }
 
     fn make_move(&mut self, player_move: usize, players_store: usize, opponents_store: usize) {
         let final_pit = self.move_stones(player_move, opponents_store);
+
+        let mut capture_occurred = false;
 
         // if another turn is not granted (see rules)
         if final_pit != players_store {
@@ -165,6 +164,7 @@ impl MancalaGameState {
 
             // if a capture occurs (see capturing rules)
             if final_pit < players_store && self.pits[final_pit] == 1 {
+                capture_occurred = true;
                 // capture stones in the opposite pit
                 let opposite_pit = TOTAL_PITS - 2 - final_pit;
                 let stones_to_capture = self.pits[opposite_pit];
@@ -176,6 +176,20 @@ impl MancalaGameState {
         }
 
         // handle game over
-        self.handle_game_over();
+        // game can only be over if:
+        //      the current player has run out of stones:
+        //          move was made from the rightmost pit (and has 7 or fewer stones)
+        //          This was the only valid move
+        //      The opposite player has had stones captured as a result of this move
+        if capture_occurred
+            || player_move == PLAYER_1_STORE - 1
+            || player_move == PLAYER_2_STORE - 1
+        {
+            self.handle_game_over();
+        }
+    }
+
+    pub fn generate_children_memory(max_depth: u32) -> Vec<Vec<MancalaGameState>> {
+        vec![Vec::with_capacity(PITS_PER_SIDE); (max_depth + 1) as usize]
     }
 }
