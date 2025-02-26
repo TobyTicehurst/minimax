@@ -1,0 +1,57 @@
+Reserving:      0.0   MB for  0 stones. Number of games: 1
+Reserving:      0.0   MB for  1 stones. Number of games: 12
+Reserving:      0.0   MB for  2 stones. Number of games: 78
+Reserving:      0.1   MB for  3 stones. Number of games: 364
+Reserving:      0.5   MB for  4 stones. Number of games: 1365
+Reserving:      0.17  MB for  5 stones. Number of games: 4368
+Reserving:      0.49  MB for  6 stones. Number of games: 12376
+Reserving:      0.127 MB for  7 stones. Number of games: 31824
+Reserving:      0.302 MB for  8 stones. Number of games: 75582
+Reserving:      0.671 MB for  9 stones. Number of games: 167960
+Reserving:      1.410 MB for 10 stones. Number of games: 352716
+Reserving:      2.821 MB for 11 stones. Number of games: 705432
+Reserving:      5.408 MB for 12 stones. Number of games: 1352078
+Reserving:      9.984 MB for 13 stones. Number of games: 2496144
+Reserving:     17.829 MB for 14 stones. Number of games: 4457400
+Reserving:     30.904 MB for 15 stones. Number of games: 7726160
+Reserving:     52.151 MB for 16 stones. Number of games: 13037895
+Reserving:     85.896 MB for 17 stones. Number of games: 21474180
+Reserving:    138.389 MB for 18 stones. Number of games: 34597290
+Reserving:    218.509 MB for 19 stones. Number of games: 54627300
+Reserving:    338.689 MB for 20 stones. Number of games: 84672315
+ INFO playground: Value: 0, Depth: 0, Time: 0ms
+ INFO playground: Value: 1, Depth: 1, Time: 0ms
+ INFO playground: Value: 2, Depth: 2, Time: 0ms
+ INFO playground: Value: 0, Depth: 3, Time: 0ms
+ INFO playground: Value: 1, Depth: 4, Time: 0ms
+ INFO playground: Value: 2, Depth: 5, Time: 0ms
+ INFO playground: Value: 3, Depth: 6, Time: 0ms
+ INFO playground: Value: 1, Depth: 7, Time: 0ms
+ INFO playground: Value: 2, Depth: 8, Time: 0ms
+ INFO playground: Value: 3, Depth: 9, Time: 0ms
+ INFO playground: Value: 3, Depth: 10, Time: 1ms
+ INFO playground: Value: 4, Depth: 11, Time: 3ms
+ INFO playground: Value: 4, Depth: 12, Time: 4ms
+ INFO playground: Value: 5, Depth: 13, Time: 13ms
+ INFO playground: Value: 5, Depth: 14, Time: 26ms
+ INFO playground: Value: 5, Depth: 15, Time: 30ms
+ INFO playground: Value: 4, Depth: 16, Time: 52ms
+ INFO playground: Value: 4, Depth: 17, Time: 88ms
+ INFO playground: Value: 4, Depth: 18, Time: 157ms
+ INFO playground: Value: 4, Depth: 19, Time: 261ms
+ INFO playground: Value: 4, Depth: 20, Time: 514ms
+ INFO playground: Value: 4, Depth: 21, Time: 747ms
+ INFO playground: Value: 4, Depth: 22, Time: 1250ms
+ INFO playground: Value: 4, Depth: 23, Time: 1989ms
+ INFO playground: Value: 4, Depth: 24, Time: 3148ms
+ INFO playground: Value: 5, Depth: 25, Time: 7113ms
+ INFO playground: Value: 5, Depth: 26, Time: 9203ms
+ INFO playground: Value: 5, Depth: 27, Time: 13108ms
+ INFO playground: Value: 5, Depth: 28, Time: 20764ms
+ INFO playground: Value: 5, Depth: 29, Time: 31564ms
+ INFO playground: Value: 5, Depth: 30, Time: 46370ms
+ INFO playground: Value: 6, Depth: 31, Time: 68451ms
+ INFO playground: Value: 6, Depth: 32, Time: 64830ms
+ INFO playground: Value: 6, Depth: 33, Time: 85216ms
+ INFO playground: Value: 6, Depth: 34, Time: 109186ms
+ INFO playground: Value: 6, Depth: 35, Time: 139175ms
