@@ -35,13 +35,14 @@ pub struct MancalaEndgamesTable {
 }
 
 fn factorial(n: u32) -> u128 {
-    return (1..((n as u128) + 1)).product();
+    (1..((n as u128) + 1)).product()
 }
 
 impl MancalaEndgamesTable {
     pub fn write_to_file(&self, filepath: &str) {
         let mut file = fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             // either use the ? operator or unwrap since it returns a Result
             .open(filepath)
@@ -105,16 +106,16 @@ impl EndgamesTable<MancalaGameState> for MancalaEndgamesTable {
                 let mut batch: &mut [TableEntry];
 
                 // integer division trick to get the number of batches, including the possibly smaller final batch
-                let num_batches = (num_games + batch_size - 1) / batch_size;
+                let num_batches = num_games.div_ceil(batch_size);
 
                 for batch_number in 0..num_batches {
                     // handle final batch being possibly smaller
-                    let current_batch_size;
-                    if batch_number == num_batches - 1 && num_games % batch_size != 0 {
-                        current_batch_size = num_games % batch_size;
-                    } else {
-                        current_batch_size = batch_size;
-                    }
+                    let current_batch_size =
+                        if batch_number == num_batches - 1 && num_games % batch_size != 0 {
+                            num_games % batch_size
+                        } else {
+                            batch_size
+                        };
 
                     // split off a batch of games to analyse and memory to store the result
                     (batch, subtable) = subtable.split_at_mut(current_batch_size);
@@ -123,11 +124,14 @@ impl EndgamesTable<MancalaGameState> for MancalaEndgamesTable {
                     scope.spawn(async move {
                         let mut game_state;
                         // analyse each game state in the batch and store the result in the table
-                        for batch_index in 0..current_batch_size {
+                        //for batch_index in 0..current_batch_size { // this is a clippy suggestion, I think it may be slower though
+                        for (batch_index, entry) in
+                            batch.iter_mut().enumerate().take(current_batch_size)
+                        {
                             let game_index = offset + batch_number * batch_size + batch_index;
                             game_state = endgames_table.get_game_state(game_index, num_stones);
                             game_state.handle_game_over();
-                            batch[batch_index] = TableEntry {
+                            *entry = TableEntry {
                                 evaluation: Solver::alphabeta_no_depth_limit(
                                     &game_state,
                                     i32::MIN,
@@ -175,7 +179,7 @@ impl MancalaEndgamesTable {
         let mut endgames_table = MancalaEndgamesTable {
             cache: Vec::with_capacity(max_stones as usize + 1),
             table: Vec::with_capacity(capacity),
-            max_stones: max_stones,
+            max_stones,
             current_stones: 0,
             stones_in_play: 0,
         };
@@ -266,32 +270,23 @@ impl MancalaEndgamesTable {
         let remaining_stones = self.stones_in_play
             - game_state.pits[MancalaGameState::PLAYER_1_STORE]
             - game_state.pits[MancalaGameState::PLAYER_2_STORE];
-        //println!("{:?}", game_state);
-        //println!("remaining_stones: {}, stones_in_play: {}, current_stones: {}", remaining_stones, self.stones_in_play, self.current_stones);
-        let result;
-        if self.current_stones < remaining_stones {
-            result = None;
-        } else {
+
+        if remaining_stones <= self.current_stones {
             let index = self.get_index(game_state, remaining_stones);
             let eval = self.table[index].evaluation;
-            let player_eval;
-            if game_state.turn {
-                player_eval = eval;
-            } else {
-                player_eval = -1 * eval;
-            }
-            result = Some(
+            let player_eval = if game_state.turn { eval } else { -eval };
+            Some(
                 (player_eval + game_state.pits[MancalaGameState::PLAYER_1_STORE] as i8
                     - game_state.pits[MancalaGameState::PLAYER_2_STORE] as i8)
                     as i32,
-            );
+            )
+        } else {
+            None
         }
-
-        result
     }
 
     fn get_pit_index(&self, index: usize) -> usize {
-        return index + index / MancalaGameState::PLAYER_1_STORE;
+        index + index / MancalaGameState::PLAYER_1_STORE
     }
 
     // this function can be optimised in many ways
@@ -316,14 +311,13 @@ impl MancalaEndgamesTable {
             for num_stones in (0..(remaining_stones + 1)).rev() {
                 // generate a new index guess
                 let new_remaining = remaining_stones - num_stones;
-                let new_index_guess;
-                if new_remaining == 0 {
-                    new_index_guess = index_guess;
+                let new_index_guess = if new_remaining == 0 {
+                    index_guess
                 } else {
-                    new_index_guess = index_guess
+                    index_guess
                         + self.cache[new_remaining as usize - 1]
-                            [MancalaGameState::PITS_NO_STORES - pit_index];
-                }
+                            [MancalaGameState::PITS_NO_STORES - pit_index]
+                };
 
                 // if the new index guess is correct, or has over corrected
                 if new_index_guess >= index {
@@ -560,7 +554,5 @@ impl MancalaEndgamesTable {
 
             offset += num_games;
         }
-
-        //println!("{:#?}", endgames_table);
     }
 }

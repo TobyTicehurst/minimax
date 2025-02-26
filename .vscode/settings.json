@@ -1,8 +1,19 @@
 {
     "cSpell.words": [
         "alphabeta",
+        "analyse",
+        "Kalah",
         "Mancala",
         "maximising",
-        "subtable"
-    ]
+        "subtable",
+        "mtdf"
+    ],
+    "cSpell.customDictionaries": {
+        "custom-dictionary-workspace": {
+            "name": "custom-dictionary-workspace",
+            "path": "${workspaceFolder:minimax}/.cspell/custom-dictionary-workspace.txt",
+            "addWords": true,
+            "scope": "workspace"
+        }
+    }
 }

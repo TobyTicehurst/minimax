@@ -78,8 +78,8 @@ impl GameState<MancalaGameState> for MancalaGameState {
         let mut ordered_moves = [0; Self::PITS_PER_SIDE];
         let mut start_index = 0;
         let mut end_index = move_index;
-        for i in 0..move_index {
-            let player_move = moves[i];
+        //for i in 0..move_index {
+        for &player_move in moves.iter().take(move_index) {
             if self.pits[player_move] as usize == players_store - player_move {
                 ordered_moves[start_index] = player_move;
                 start_index += 1;
@@ -89,8 +89,9 @@ impl GameState<MancalaGameState> for MancalaGameState {
             }
         }
 
-        for i in 0..move_index {
-            let player_move = ordered_moves[i];
+        //for i in 0..move_index {
+        for &player_move in ordered_moves.iter().take(move_index) {
+            // let player_move = ordered_moves[i];
             let mut child = *self;
             child.make_move(player_move, players_store, opponents_store);
             children.push(child);
@@ -305,13 +306,11 @@ impl MancalaGameState {
     pub fn get_valid_moves(&self) -> Vec<usize> {
         let mut valid_moves = Vec::with_capacity(Self::PITS_PER_SIDE);
 
-        let pit_offset;
-
-        if self.turn == Self::PLAYER_1 {
-            pit_offset = 0;
+        let pit_offset = if self.turn == Self::PLAYER_1 {
+            0
         } else {
-            pit_offset = Self::PLAYER_1_STORE + 1;
-        }
+            Self::PLAYER_1_STORE + 1
+        };
 
         for i in 0..Self::PITS_PER_SIDE {
             let player_move = pit_offset + i;

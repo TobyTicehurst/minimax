@@ -27,11 +27,11 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
                 transposition_table_capacity,
                 max_table_depth,
             ),
-            endgames_table: endgames_table,
+            endgames_table,
         }
     }
 
-    pub fn minimax(&self, game_state: &T, depth: u32, game_state_cache: &mut [Vec<T>]) -> i32 {
+    pub fn minimax(game_state: &T, depth: u32, game_state_cache: &mut [Vec<T>]) -> i32 {
         if depth == 0 || game_state.is_game_over() {
             return game_state.heuristic();
         }
@@ -45,14 +45,14 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
         if game_state.is_maximising_player() {
             value = i32::MIN;
             for child in game_state.get_children(&mut current_cache[0]) {
-                value = max(value, self.minimax(child, depth - 1, remaining_cache));
+                value = max(value, Self::minimax(child, depth - 1, remaining_cache));
             }
         }
         // if player 2
         else {
             value = i32::MAX;
             for child in game_state.get_children(&mut current_cache[0]) {
-                value = min(value, self.minimax(child, depth - 1, remaining_cache));
+                value = min(value, Self::minimax(child, depth - 1, remaining_cache));
             }
         }
 
@@ -118,7 +118,6 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
     // if we ever find that player 2 can make a move which results in an evaluation less than alpha then we can immediately discard this branch and return
     // vice-versa for player 1 and beta
     pub fn alphabeta(
-        &self,
         game_state: &T,
         depth: u32,
         mut alpha: i32,
@@ -140,7 +139,7 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
             for child in game_state.get_children(&mut current_cache[0]) {
                 value = max(
                     value,
-                    self.alphabeta(child, depth - 1, alpha, beta, remaining_cache),
+                    Self::alphabeta(child, depth - 1, alpha, beta, remaining_cache),
                 );
                 if value >= beta {
                     break;
@@ -154,7 +153,7 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
             for child in game_state.get_children(&mut current_cache[0]) {
                 value = min(
                     value,
-                    self.alphabeta(child, depth - 1, alpha, beta, remaining_cache),
+                    Self::alphabeta(child, depth - 1, alpha, beta, remaining_cache),
                 );
                 if value <= alpha {
                     break;
@@ -184,7 +183,7 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
 
         while lower_bound < upper_bound {
             beta = max(guess, lower_bound + 1);
-            guess = self.alphabeta(
+            guess = Self::alphabeta(
                 &self.start_game_state.clone(),
                 depth,
                 beta - 1,
