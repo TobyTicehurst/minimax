@@ -524,7 +524,6 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
 
         while lower_bound < upper_bound {
             beta = max(guess, lower_bound + 1);
-            println!("test");
             guess = self.test(
                 &self.start_game_state.clone(),
                 beta - 1,

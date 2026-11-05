@@ -3,7 +3,7 @@
 use num_integer::binomial;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
 use crate::{
@@ -11,7 +11,9 @@ use crate::{
     minimax::{EndgamesTable, Solver},
 };
 
+// repr(transparent) so a table can be read straight from bytes (see read_from_file)
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[repr(transparent)]
 pub struct TableEntry {
     pub evaluation: i8,
 }
@@ -32,6 +34,27 @@ pub struct MancalaEndgamesTable {
     current_stones: u32,
     // when calculating endgames, not all 48 stones are in play
     stones_in_play: u32,
+}
+
+// ask the kernel to back this memory with 2MB pages
+// table lookups are random reads across many GB, so with 4KB pages almost every one misses the TLB
+fn advise_huge_pages<T>(memory: &mut [T]) {
+    const PAGE_SIZE: usize = 4096;
+    let start = memory.as_mut_ptr() as usize;
+    let end = start + std::mem::size_of_val(memory);
+    // madvise needs a page aligned start
+    let aligned_start = (start + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+    if aligned_start >= end {
+        return;
+    }
+    // this is only advice: if transparent huge pages are disabled it fails harmlessly
+    unsafe {
+        libc::madvise(
+            aligned_start as *mut libc::c_void,
+            end - aligned_start,
+            libc::MADV_HUGEPAGE,
+        );
+    }
 }
 
 fn factorial(n: u32) -> u128 {
@@ -60,18 +83,40 @@ impl MancalaEndgamesTable {
     }
 
     pub fn read_from_file(filepath: &str) -> Self {
-        let mut data: Vec<u8> = fs::read(filepath).unwrap();
-        println!("Read {} MB from disk", data.len() as f32 / 1e6);
-        let table_data = data.split_off(4);
-        let max_stones_data = data;
-        let max_stones = u32::from_le_bytes(max_stones_data.try_into().unwrap());
-        let mut endgames_table = Self::new(max_stones);
-        endgames_table.table = table_data
-            .into_iter()
-            .map(|byte| TableEntry {
-                evaluation: byte as i8,
-            })
-            .collect();
+        let mut file = fs::File::open(filepath).unwrap();
+
+        let mut max_stones_data = [0u8; 4];
+        file.read_exact(&mut max_stones_data).unwrap();
+        let max_stones = u32::from_le_bytes(max_stones_data);
+
+        let num_games = Self::total_num_game_states_full_board(max_stones) as usize;
+        let file_len = file.metadata().unwrap().len() as usize;
+        assert_eq!(
+            file_len,
+            4 + num_games,
+            "{} is the wrong size for a {} stone table",
+            filepath,
+            max_stones
+        );
+
+        // read straight into the final buffer (one copy), advising huge pages before it's touched
+        // vec! of zeros is lazily allocated by the OS, so nothing is written until the read
+        let mut table_data = vec![0u8; num_games];
+        advise_huge_pages(&mut table_data);
+        file.read_exact(&mut table_data).unwrap();
+        println!("Read {} MB from disk", (4 + num_games) as f32 / 1e6);
+
+        // TableEntry is a repr(transparent) i8, so it has the same layout as u8
+        let mut table_data = std::mem::ManuallyDrop::new(table_data);
+        let table = unsafe {
+            Vec::from_raw_parts(
+                table_data.as_mut_ptr() as *mut TableEntry,
+                table_data.len(),
+                table_data.capacity(),
+            )
+        };
+
+        let mut endgames_table = Self::with_table(max_stones, table);
         endgames_table.current_stones = max_stones;
         endgames_table.stones_in_play = MancalaGameState::TOTAL_STONES;
         println!("Endgames table with {} stones", max_stones);
@@ -173,11 +218,16 @@ impl EndgamesTable<MancalaGameState> for MancalaEndgamesTable {
 impl MancalaEndgamesTable {
     pub fn new(max_stones: u32) -> MancalaEndgamesTable {
         let capacity = Self::total_num_game_states_full_board(max_stones) as usize;
+        let mut table = Vec::with_capacity(capacity);
+        advise_huge_pages(table.spare_capacity_mut());
+        Self::with_table(max_stones, table)
+    }
 
+    fn with_table(max_stones: u32, table: Vec<TableEntry>) -> MancalaEndgamesTable {
         let mut endgames_table = MancalaEndgamesTable {
             cache: Vec::with_capacity(max_stones as usize + 1),
-            table: Vec::with_capacity(capacity),
-            max_stones: max_stones,
+            table,
+            max_stones,
             current_stones: 0,
             stones_in_play: 0,
         };
@@ -266,8 +316,8 @@ impl MancalaEndgamesTable {
 
     pub fn get_value(&self, game_state: &MancalaGameState) -> Option<i32> {
         let remaining_stones = self.stones_in_play
-            - game_state.pits[MancalaGameState::PLAYER_1_STORE]
-            - game_state.pits[MancalaGameState::PLAYER_2_STORE];
+            - game_state.pits[MancalaGameState::PLAYER_1_STORE] as u32
+            - game_state.pits[MancalaGameState::PLAYER_2_STORE] as u32;
         //println!("{:?}", game_state);
         //println!("remaining_stones: {}, stones_in_play: {}, current_stones: {}", remaining_stones, self.stones_in_play, self.current_stones);
         let result;
@@ -331,9 +381,9 @@ impl MancalaEndgamesTable {
                 if new_index_guess >= index {
                     // if the guess is correct
                     if new_index_guess == index {
-                        game_state.pits[self.get_pit_index(pit_index)] = num_stones;
+                        game_state.pits[self.get_pit_index(pit_index)] = num_stones as u8;
                         if new_remaining != 0 {
-                            game_state.pits[self.get_pit_index(pit_index + 1)] = new_remaining;
+                            game_state.pits[self.get_pit_index(pit_index + 1)] = new_remaining as u8;
                         }
 
                         return game_state;
@@ -347,7 +397,7 @@ impl MancalaEndgamesTable {
             }
 
             // can get to this point either via over correcting or if 0 is the correct number of stones
-            game_state.pits[self.get_pit_index(pit_index)] = next_num_stones;
+            game_state.pits[self.get_pit_index(pit_index)] = next_num_stones as u8;
             remaining_stones -= next_num_stones;
             if remaining_stones == 0 {
                 return game_state;
@@ -414,7 +464,7 @@ impl MancalaEndgamesTable {
         total_stones: u32,
     ) {
         if pit_index == 12 {
-            game_state.pits[12] = remaining_stones;
+            game_state.pits[12] = remaining_stones as u8;
 
             // println!("state: {:?}", game_state);
 
@@ -432,7 +482,7 @@ impl MancalaEndgamesTable {
             self.all_positions(game_state, remaining_stones, pit_index + 1, total_stones);
         } else {
             for i in 0..(remaining_stones + 1) {
-                game_state.pits[pit_index] = i;
+                game_state.pits[pit_index] = i as u8;
                 self.all_positions(
                     game_state,
                     remaining_stones - i,
@@ -573,7 +623,7 @@ mod tests {
 
     // positions with more stones than the table holds, so the solver has to search
     fn test_positions() -> Vec<MancalaGameState> {
-        let boards: [[u32; 14]; 4] = [
+        let boards: [[u8; 14]; 4] = [
             [2, 1, 0, 3, 1, 2, 10, 1, 2, 0, 2, 1, 1, 22],
             [0, 3, 1, 1, 0, 4, 18, 2, 0, 1, 1, 2, 0, 15],
             [1, 1, 1, 1, 1, 1, 20, 1, 1, 1, 1, 1, 1, 16],
