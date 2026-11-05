@@ -422,12 +422,12 @@ fn solve_opening(endgames_table: &Rc<MancalaEndgamesTable>, each_move: bool) {
     let now = SystemTime::now();
     let (best_move, eval) = full_solve(start, endgames_table);
     info!(
-        "Starting position: value {} (positive = player 1 ahead), best move {}, {}s",
+        "Starting position: value {} (positive = player 1 ahead), best move {}, {}ms",
         eval,
         MancalaMove::from_index(&best_move)
             .map(|m| m.to_str().to_string())
             .unwrap_or_else(|| "not found".to_string()),
-        now.elapsed().unwrap().as_secs()
+        now.elapsed().unwrap().as_millis()
     );
 
     if each_move {
@@ -439,11 +439,11 @@ fn solve_opening(endgames_table: &Rc<MancalaEndgamesTable>, each_move: bool) {
             let now = SystemTime::now();
             let (_, eval) = full_solve(child, endgames_table);
             info!(
-                "Opening move {} (pit {}): value {}, {}s",
+                "Opening move {} (pit {}): value {}, {}ms",
                 MancalaMove::from_index(&child_move).unwrap().to_str(),
                 child_move + 1,
                 eval,
-                now.elapsed().unwrap().as_secs()
+                now.elapsed().unwrap().as_millis()
             );
         }
     }
