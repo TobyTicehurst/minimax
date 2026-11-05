@@ -287,17 +287,24 @@ fn full_solve(
                 return (child_move, eval);
             }
         } else if let Some(lookup) = minimax_solver.transposition_table.lookup(child) {
-            if lookup.lower_bound.bound == lookup.upper_bound.bound
-                && lookup.lower_bound.bound == eval
-            {
+            // only trust bounds from the full-depth search (depth-limited bounds are heuristic)
+            // a child can't be better than the parent's value, so a child bound reaching it means the child is optimal
+            let proven_best = if start_game_state.is_maximising_player() {
+                lookup.lower_bound.depth == u32::MAX && lookup.lower_bound.bound >= eval
+            } else {
+                lookup.upper_bound.depth == u32::MAX && lookup.upper_bound.bound <= eval
+            };
+            if proven_best {
                 return (child_move, eval);
             }
         }
     }
 
-    println!("Move not found");
+    // fall back to a legal move rather than an invalid index
+    let fallback = start_game_state.get_valid_moves()[0];
+    println!("Best move not found, falling back to the first valid move");
 
-    (404, eval)
+    (fallback, eval)
 }
 
 fn testing() {
@@ -408,6 +415,40 @@ fn testing() {
     }
 }
 
+// solve the starting position, and optionally each of player 1's opening moves
+fn solve_opening(endgames_table: &Rc<MancalaEndgamesTable>, each_move: bool) {
+    let start = MancalaGameState::default();
+
+    let now = SystemTime::now();
+    let (best_move, eval) = full_solve(start, endgames_table);
+    info!(
+        "Starting position: value {} (positive = player 1 ahead), best move {}, {}s",
+        eval,
+        MancalaMove::from_index(&best_move)
+            .map(|m| m.to_str().to_string())
+            .unwrap_or_else(|| "not found".to_string()),
+        now.elapsed().unwrap().as_secs()
+    );
+
+    if each_move {
+        for (child, child_move) in start
+            .get_children_naive()
+            .into_iter()
+            .zip(start.get_valid_moves())
+        {
+            let now = SystemTime::now();
+            let (_, eval) = full_solve(child, endgames_table);
+            info!(
+                "Opening move {} (pit {}): value {}, {}s",
+                MancalaMove::from_index(&child_move).unwrap().to_str(),
+                child_move + 1,
+                eval,
+                now.elapsed().unwrap().as_secs()
+            );
+        }
+    }
+}
+
 fn endgames_to_file(num_stones: u32) {
     let filepath = "endgames.bin";
     let mut endgames_table = MancalaEndgamesTable::new(num_stones);
@@ -426,7 +467,38 @@ fn main() {
     //MancalaEndgamesTable::test_table_validity(3);
     //MancalaEndgamesTable::test_table_accuracy(5);
     //endgames_to_file(30);
-    testing();
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        // cargo run --release -- build-endgames <max_stones> [path]
+        Some("build-endgames") => {
+            let num_stones: u32 = args
+                .get(2)
+                .and_then(|s| s.parse().ok())
+                .expect("usage: build-endgames <max_stones> [path]");
+            let path = args.get(3).map(String::as_str).unwrap_or("endgames.bin");
+            let now = SystemTime::now();
+            let mut endgames_table = MancalaEndgamesTable::new(num_stones);
+            endgames_table.calculate_endgames();
+            endgames_table.write_to_file(path);
+            info!(
+                "Wrote {} stone endgames table to {} in {}s",
+                num_stones,
+                path,
+                now.elapsed().unwrap().as_secs()
+            );
+        }
+        // cargo run --release -- solve [path] [--moves]
+        Some("solve") => {
+            let path = args
+                .get(2)
+                .filter(|s| !s.starts_with("--"))
+                .map(String::as_str)
+                .unwrap_or("endgames.bin");
+            let endgames_table = Rc::new(MancalaEndgamesTable::read_from_file(path));
+            solve_opening(&endgames_table, args.iter().any(|a| a == "--moves"));
+        }
+        _ => testing(),
+    }
 
     // let test_state = MancalaGameState {
     //     //pits: [1, 0, 1, 11, 9, 0, 14, 0, 2, 1, 0, 0, 0, 9],

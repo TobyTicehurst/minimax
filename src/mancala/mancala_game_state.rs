@@ -244,23 +244,20 @@ impl MancalaGameState {
                 && final_pit >= players_store - MancalaGameState::PITS_PER_SIDE
                 && self.pits[final_pit] == 1
             {
-                capture_occurred = true;
-                // capture stones in the opposite pit
                 let opposite_pit = Self::TOTAL_PITS - 2 - final_pit;
                 let stones_to_capture = self.pits[opposite_pit];
-                self.pits[opposite_pit] = 0;
-
-                // move those stones to the player's store
-                self.pits[players_store] += stones_to_capture;
+                if stones_to_capture > 0 {
+                    capture_occurred = true;
+                    // move the capturing stone and the opposite stones to the player's store
+                    self.pits[opposite_pit] = 0;
+                    self.pits[final_pit] = 0;
+                    self.pits[players_store] += stones_to_capture + 1;
+                }
             }
         }
 
         // handle game over
-        // game can only be over if:
-        //      the current player has run out of stones:
-        //          move was made from the rightmost pit (and has 7 or fewer stones)
-        //          This was the only valid move
-        //      The opposite player has had stones captured as a result of this move
+        // game can only be over if a capture occurred or the final stone was moved
         if capture_occurred
             || player_move == Self::PLAYER_1_STORE - 1
             || player_move == Self::PLAYER_2_STORE - 1
@@ -321,5 +318,126 @@ impl MancalaGameState {
         }
 
         valid_moves
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const P1_STORE: usize = MancalaGameState::PLAYER_1_STORE;
+    const P2_STORE: usize = MancalaGameState::PLAYER_2_STORE;
+
+    fn state(pits: [u32; MancalaGameState::TOTAL_PITS], turn: bool) -> MancalaGameState {
+        MancalaGameState {
+            pits,
+            turn,
+            game_over: false,
+        }
+    }
+
+    fn total(s: &MancalaGameState) -> u32 {
+        s.pits.iter().sum()
+    }
+
+    #[test]
+    fn capture_takes_last_stone_and_opposite_stones() {
+        // P1 sows 1 stone from A into empty B; opposite B is pit 11 with 5 stones
+        let mut s = state([1, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 5, 0, 0], true);
+        s.make_move(0, P1_STORE, P2_STORE);
+        assert_eq!(s.pits, [0, 0, 0, 2, 0, 0, 6, 0, 3, 0, 0, 0, 0, 0]);
+        assert!(!s.turn);
+        assert!(!s.game_over);
+    }
+
+    #[test]
+    fn player_2_capture() {
+        // P2 sows 1 stone from pit 7 into empty pit 8; opposite pit 4 has 3 stones
+        let mut s = state([2, 0, 0, 0, 3, 0, 0, 1, 0, 0, 4, 0, 0, 0], false);
+        s.make_move(7, P2_STORE, P1_STORE);
+        assert_eq!(s.pits, [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4]);
+        assert!(s.turn);
+    }
+
+    #[test]
+    fn no_capture_when_opposite_pit_empty() {
+        let mut s = state([1, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0], true);
+        s.make_move(0, P1_STORE, P2_STORE);
+        assert_eq!(s.pits, [0, 1, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0]);
+        assert!(!s.turn);
+        assert!(!s.game_over);
+    }
+
+    #[test]
+    fn no_capture_on_opponents_side() {
+        // P1 sows 2 stones from F: store, then pit 7 (empty, opponent's side)
+        let mut s = state([0, 0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 4, 0, 0], true);
+        s.make_move(5, P1_STORE, P2_STORE);
+        assert_eq!(s.pits, [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 4, 0, 0]);
+        assert!(!s.turn);
+    }
+
+    #[test]
+    fn capture_with_last_own_stone_ends_game() {
+        // P1's only stone captures, leaving P1's side empty: P2 sweeps their remaining stones
+        let mut s = state([1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 5, 0, 0], true);
+        s.make_move(0, P1_STORE, P2_STORE);
+        assert!(s.game_over);
+        assert_eq!(s.pits[P1_STORE], 6);
+        assert_eq!(s.pits[P2_STORE], 3);
+        assert_eq!(total(&s), 9);
+    }
+
+    #[test]
+    fn capture_of_opponents_last_stones_ends_game() {
+        let mut s = state([1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0], true);
+        s.make_move(0, P1_STORE, P2_STORE);
+        assert!(s.game_over);
+        assert_eq!(s.pits[P1_STORE], 8);
+        assert_eq!(s.pits[P2_STORE], 0);
+    }
+
+    #[test]
+    fn thirteen_stone_lap_captures_into_starting_pit() {
+        // 13 stones from A: one lap (skipping P2's store) ending back in the now-empty A
+        let mut s = state([13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0], true);
+        s.make_move(0, P1_STORE, P2_STORE);
+        // opposite of A is pit 12: 2 + 1 sown = 3, plus the capturing stone
+        assert_eq!(s.pits[0], 0);
+        assert_eq!(s.pits[12], 0);
+        assert_eq!(s.pits[P1_STORE], 1 + 3 + 1);
+        assert_eq!(s.pits[P2_STORE], 0);
+        assert_eq!(total(&s), 15);
+    }
+
+    #[test]
+    fn last_stone_in_store_gives_extra_turn() {
+        let mut s = MancalaGameState::default();
+        // C has 4 stones: D, E, F, store
+        s.make_move(2, P1_STORE, P2_STORE);
+        assert!(s.turn);
+        assert_eq!(s.pits, [4, 4, 0, 5, 5, 5, 1, 4, 4, 4, 4, 4, 4, 0]);
+    }
+
+    #[test]
+    fn sowing_skips_opponents_store() {
+        // 9 stones from F: P1 store, 7..12, skip P2 store, then A and B (B non-empty, so no capture)
+        let mut s = state([0, 1, 1, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0], true);
+        s.make_move(5, P1_STORE, P2_STORE);
+        assert_eq!(s.pits, [1, 2, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0]);
+        assert!(!s.turn);
+    }
+
+    #[test]
+    fn stones_are_conserved_from_start() {
+        let s = MancalaGameState::default();
+        let mut cache = s.get_children_cache();
+        for child in s.get_children(&mut cache).clone() {
+            assert_eq!(total(&child), MancalaGameState::TOTAL_STONES);
+            let mut cache2 = child.get_children_cache();
+            for grandchild in child.get_children(&mut cache2) {
+                assert_eq!(total(grandchild), MancalaGameState::TOTAL_STONES);
+            }
+        }
     }
 }

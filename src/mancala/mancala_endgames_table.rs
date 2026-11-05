@@ -43,6 +43,8 @@ impl MancalaEndgamesTable {
         let mut file = fs::OpenOptions::new()
             .create(true)
             .write(true)
+            // overwrite any existing (possibly larger) file
+            .truncate(true)
             // either use the ? operator or unwrap since it returns a Result
             .open(filepath)
             .unwrap();
@@ -562,5 +564,43 @@ impl MancalaEndgamesTable {
         }
 
         //println!("{:#?}", endgames_table);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // every table entry must agree with a plain search that doesn't use the table
+    #[test]
+    fn table_matches_full_search() {
+        let max_stones = 5;
+        let mut endgames_table = MancalaEndgamesTable::new(max_stones);
+        endgames_table.calculate_endgames();
+
+        let mut blank_table = MancalaEndgamesTable::new(0);
+        blank_table.calculate_endgames();
+
+        let mut offset = 0;
+        for num_stones in 0..=max_stones {
+            let num_games = MancalaEndgamesTable::num_game_states_full_board(num_stones) as usize;
+            endgames_table.stones_in_play = num_stones;
+            blank_table.stones_in_play = num_stones;
+            for index in 0..num_games {
+                for turn in [true, false] {
+                    let mut game_state = endgames_table.get_game_state(offset + index, num_stones);
+                    game_state.turn = turn;
+                    let table_eval = endgames_table.lookup(&game_state).unwrap();
+                    game_state.handle_game_over();
+                    if game_state.game_over {
+                        continue;
+                    }
+                    let eval =
+                        Solver::alphabeta_no_depth_limit(&game_state, i32::MIN, i32::MAX, &blank_table);
+                    assert_eq!(eval, table_eval, "{:?}", game_state);
+                }
+            }
+            offset += num_games;
+        }
     }
 }
