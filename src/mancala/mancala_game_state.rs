@@ -80,7 +80,8 @@ impl GameState<MancalaGameState> for MancalaGameState {
         let mut end_index = move_index;
         for i in 0..move_index {
             let player_move = moves[i];
-            if self.pits[player_move] as usize == players_store - player_move {
+            // a full lap (every pit except the opponent's store) also ends in the player's store
+            if self.pits[player_move] as usize % (Self::TOTAL_PITS - 1) == players_store - player_move {
                 ordered_moves[start_index] = player_move;
                 start_index += 1;
             } else {
@@ -426,6 +427,17 @@ mod tests {
         s.make_move(5, P1_STORE, P2_STORE);
         assert_eq!(s.pits, [1, 2, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0]);
         assert!(!s.turn);
+    }
+
+    #[test]
+    fn full_lap_extra_turn_moves_are_ordered_first() {
+        // F with 14 stones goes round once and ends in P1's store; A with 1 stone does not
+        let s = state([1, 0, 0, 0, 0, 14, 0, 1, 0, 0, 0, 0, 0, 0], true);
+        let mut cache = s.get_children_cache();
+        let children = s.get_children(&mut cache);
+        assert_eq!(children.len(), 2);
+        assert!(children[0].turn, "extra-turn move should be searched first");
+        assert!(!children[1].turn);
     }
 
     #[test]

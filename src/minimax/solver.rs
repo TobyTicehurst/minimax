@@ -219,7 +219,7 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
             beta = eval;
         } else {
             // opening table
-            if self.max_depth - depth <= self.transposition_table.max_depth {
+            if self.max_depth.saturating_sub(depth) <= self.transposition_table.max_depth {
                 // if we have previously explored this node
                 if let Some(lookup_result) = self.transposition_table.lookup(game_state) {
                     // these values are only valid if we reached this position at an equal or deeper depth
@@ -277,7 +277,7 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
             }
         }
 
-        if self.max_depth - depth <= self.transposition_table.max_depth {
+        if self.max_depth.saturating_sub(depth) <= self.transposition_table.max_depth {
             // store this in the transposition table
             let transposition_table_element = self.transposition_table.get(game_state);
             // fail low: we have a new upper bound
@@ -348,6 +348,26 @@ impl<'a, T: GameState<T>, E: EndgamesTable<T>> Solver<'a, T, E> {
             alpha = eval;
             beta = eval;
         } else {
+            // if we have previously explored this node to the end of the game
+            // bounds stored by the depth-limited search are heuristic, so only trust full-depth ones
+            if depth <= self.transposition_table.max_depth {
+                if let Some(lookup_result) = self.transposition_table.lookup(game_state) {
+                    if lookup_result.lower_bound.depth == u32::MAX {
+                        if lookup_result.lower_bound.bound >= beta {
+                            return lookup_result.lower_bound.bound;
+                        }
+                        alpha = max(alpha, lookup_result.lower_bound.bound);
+                    }
+
+                    if lookup_result.upper_bound.depth == u32::MAX {
+                        if lookup_result.upper_bound.bound <= alpha {
+                            return lookup_result.upper_bound.bound;
+                        }
+                        beta = min(beta, lookup_result.upper_bound.bound);
+                    }
+                }
+            }
+
             // split off the data needed (see README for an explanation of this optimisation)
             let (current_cache, future_cache) = game_state_cache.split_at_mut(1);
 

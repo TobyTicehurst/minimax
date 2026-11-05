@@ -63,7 +63,6 @@ pub fn play_game() {
     let time = now.elapsed().unwrap();
     info!("Total time to solve: {}ms", time.as_millis());
 
-    let mut children_memory = MancalaGameState::generate_children_memory(max_depth);
     let mut game_state = MancalaGameState::default();
 
     for _move_number in 0..max_table_depth {
@@ -97,13 +96,8 @@ pub fn play_game() {
         }
         let mut next_game_state = MancalaGameState::default();
 
-        // TODO fix with smart reordering
-        let children: Vec<MancalaGameState> = game_state
-            .get_children(&mut children_memory[0])
-            .to_owned()
-            .into_iter()
-            .rev()
-            .collect();
+        // get_children reorders moves, so use the unordered children to keep them paired with valid_moves
+        let children = game_state.get_children_naive();
         for (child, child_move) in children.iter().zip(valid_moves) {
             if let Some(lookup) = minimax_solver.transposition_table.lookup(child) {
                 if lookup.lower_bound.bound == lookup.upper_bound.bound {

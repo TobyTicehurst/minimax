@@ -49,7 +49,7 @@ impl MancalaEndgamesTable {
             .open(filepath)
             .unwrap();
 
-        let num_stones_data = self.max_stones.to_ne_bytes();
+        let num_stones_data = self.max_stones.to_le_bytes(); // fixed byte order so files are portable
         file.write_all(&num_stones_data).unwrap();
         let formatted_table: Vec<u8> = self
             .table
@@ -64,7 +64,7 @@ impl MancalaEndgamesTable {
         println!("Read {} MB from disk", data.len() as f32 / 1e6);
         let table_data = data.split_off(4);
         let max_stones_data = data;
-        let max_stones = u32::from_ne_bytes(max_stones_data.try_into().unwrap());
+        let max_stones = u32::from_le_bytes(max_stones_data.try_into().unwrap());
         let mut endgames_table = Self::new(max_stones);
         endgames_table.table = table_data
             .into_iter()
@@ -570,6 +570,65 @@ impl MancalaEndgamesTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // positions with more stones than the table holds, so the solver has to search
+    fn test_positions() -> Vec<MancalaGameState> {
+        let boards: [[u32; 14]; 4] = [
+            [2, 1, 0, 3, 1, 2, 10, 1, 2, 0, 2, 1, 1, 22],
+            [0, 3, 1, 1, 0, 4, 18, 2, 0, 1, 1, 2, 0, 15],
+            [1, 1, 1, 1, 1, 1, 20, 1, 1, 1, 1, 1, 1, 16],
+            [4, 0, 2, 0, 1, 0, 13, 0, 3, 2, 2, 0, 3, 18],
+        ];
+        let mut positions = Vec::new();
+        for pits in boards {
+            for turn in [true, false] {
+                positions.push(MancalaGameState {
+                    pits,
+                    turn,
+                    game_over: false,
+                });
+            }
+        }
+        positions
+    }
+
+    // the transposition table must not change the result of the full-depth search
+    #[test]
+    fn full_depth_search_matches_plain_alphabeta() {
+        let mut endgames_table = MancalaEndgamesTable::new(6);
+        endgames_table.calculate_endgames();
+        endgames_table.stones_in_play = MancalaGameState::TOTAL_STONES;
+        let endgames_table = std::rc::Rc::new(endgames_table);
+
+        for position in test_positions() {
+            let expected =
+                Solver::alphabeta_no_depth_limit(&position, i32::MIN, i32::MAX, &*endgames_table);
+
+            let mut solver = Solver::new(position, 8, 20, 1000, &endgames_table);
+            let mut cache = MancalaGameState::generate_children_memory(1000);
+            let mut guess = 0;
+            let mut depth = 0;
+            while depth <= solver.max_depth {
+                guess = solver.mtdf_with_memory(guess, depth, &mut cache);
+                depth += 2;
+            }
+            let eval = solver.mtdf_with_memory_no_depth_limit(guess, &mut cache);
+            assert_eq!(eval, expected, "{:?}", position);
+        }
+    }
+
+    // a search deeper than the solver's max_depth used to underflow when checking the table depth
+    #[test]
+    fn search_deeper_than_max_depth_does_not_underflow() {
+        let mut endgames_table = MancalaEndgamesTable::new(0);
+        endgames_table.calculate_endgames();
+        endgames_table.stones_in_play = MancalaGameState::TOTAL_STONES;
+        let endgames_table = std::rc::Rc::new(endgames_table);
+        let position = test_positions()[0];
+        let mut solver = Solver::new(position, 2, 20, 1000, &endgames_table);
+        let mut cache = MancalaGameState::generate_children_memory(10);
+        solver.mtdf_with_memory(0, 10, &mut cache);
+    }
 
     // every table entry must agree with a plain search that doesn't use the table
     #[test]
