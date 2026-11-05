@@ -5,7 +5,8 @@ use crate::minimax::GameState;
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct MancalaGameState {
     // number of stones in each slot
-    pub pits: [u32; Self::TOTAL_PITS],
+    // u8 keeps the whole state in 16 bytes (there are only 48 stones)
+    pub pits: [u8; Self::TOTAL_PITS],
     // who's turn is it next
     pub turn: bool,
     pub game_over: bool,
@@ -49,55 +50,18 @@ impl GameState<MancalaGameState> for MancalaGameState {
         children_cache: &'a mut Vec<MancalaGameState>,
     ) -> &'a Vec<MancalaGameState> {
         children_cache.clear();
-        let children: &mut Vec<MancalaGameState> = children_cache;
-        let pit_offset;
-        let players_store;
-        let opponents_store;
+        let (players_store, opponents_store) = self.stores();
+        let (moves, num_moves) = self.ordered_moves();
 
-        if self.turn == Self::PLAYER_1 {
-            pit_offset = 0;
-            players_store = Self::PLAYER_1_STORE;
-            opponents_store = Self::PLAYER_2_STORE;
-        } else {
-            pit_offset = Self::PLAYER_1_STORE + 1;
-            players_store = Self::PLAYER_2_STORE;
-            opponents_store = Self::PLAYER_1_STORE;
-        }
-
-        // loop through each possible move, add it to the list is valid
-        let mut moves = [0; Self::PITS_PER_SIDE];
-        let mut move_index = 0;
-        for player_move in 0..Self::PITS_PER_SIDE {
-            if self.pits[pit_offset + player_move] > 0 {
-                moves[move_index] = pit_offset + player_move;
-                move_index += 1;
-            }
-        }
-
-        // loop through each valid move, if we would get another turn, put it to the start of the list
-        let mut ordered_moves = [0; Self::PITS_PER_SIDE];
-        let mut start_index = 0;
-        let mut end_index = move_index;
-        for i in 0..move_index {
-            let player_move = moves[i];
-            // a full lap (every pit except the opponent's store) also ends in the player's store
-            if self.pits[player_move] as usize % (Self::TOTAL_PITS - 1) == players_store - player_move {
-                ordered_moves[start_index] = player_move;
-                start_index += 1;
-            } else {
-                ordered_moves[end_index - 1] = player_move;
-                end_index -= 1;
-            }
-        }
-
-        for i in 0..move_index {
-            let player_move = ordered_moves[i];
-            let mut child = *self;
+        for &player_move in &moves[..num_moves] {
+            // build the child in place rather than copying it in afterwards:
+            // copying a freshly written state stalls on store-to-load forwarding
+            children_cache.push(*self);
+            let child = children_cache.last_mut().unwrap();
             child.make_move(player_move, players_store, opponents_store);
-            children.push(child);
         }
 
-        children
+        children_cache
     }
 
     fn get_children_cache(&self) -> Vec<MancalaGameState> {
@@ -119,11 +83,102 @@ impl MancalaGameState {
     const PLAYER_1_PITS: std::ops::Range<usize> = 0..Self::PLAYER_1_STORE;
     const PLAYER_2_PITS: std::ops::Range<usize> = (Self::PLAYER_1_STORE + 1)..Self::PLAYER_2_STORE;
 
-    const DEFAULT_STARTING_POSITION: [u32; Self::TOTAL_PITS] =
+    const DEFAULT_STARTING_POSITION: [u8; Self::TOTAL_PITS] =
         [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0];
 
     pub const TOTAL_STONES: u32 = Self::STONES_PER_PIT * Self::PITS_PER_SIDE as u32 * 2;
     const WIN_VALUE: i32 = Self::TOTAL_STONES as i32 + 2;
+
+    // (players_store, opponents_store) for the player to move
+    #[inline]
+    fn stores(&self) -> (usize, usize) {
+        if self.turn == Self::PLAYER_1 {
+            (Self::PLAYER_1_STORE, Self::PLAYER_2_STORE)
+        } else {
+            (Self::PLAYER_2_STORE, Self::PLAYER_1_STORE)
+        }
+    }
+
+    // valid moves for the player to move, in search order:
+    //  1. moves which end in the player's store (another turn), from the far end towards the store
+    //  2. moves which capture, from the store side backwards
+    //  3. the rest, from the store side backwards
+    pub fn ordered_moves(&self) -> ([usize; Self::PITS_PER_SIDE], usize) {
+        let (players_store, _) = self.stores();
+        let pit_offset = players_store - Self::PITS_PER_SIDE;
+        // every pit except the opponent's store
+        const LAP: usize = MancalaGameState::TOTAL_PITS - 1;
+
+        let mut extra_turns = [0; Self::PITS_PER_SIDE];
+        let mut num_extra_turns = 0;
+        let mut captures = [0; Self::PITS_PER_SIDE];
+        let mut num_captures = 0;
+        let mut others = [0; Self::PITS_PER_SIDE];
+        let mut num_others = 0;
+
+        for i in 0..Self::PITS_PER_SIDE {
+            let stones = self.pits[pit_offset + i] as usize;
+            if stones == 0 {
+                continue;
+            }
+            // where the last stone lands, counting the player's own pits as 0..6 and their store as 6
+            let landing = (i + stones) % LAP;
+            if landing == Self::PITS_PER_SIDE {
+                extra_turns[num_extra_turns] = pit_offset + i;
+                num_extra_turns += 1;
+                continue;
+            }
+            let is_capture = landing < Self::PITS_PER_SIDE && {
+                let landing_pit = pit_offset + landing;
+                let opposite_pit = Self::TOTAL_PITS - 2 - landing_pit;
+                // landing pit empty before the last stone (13 stones lands back in the emptied start pit)
+                // and the opposite pit has stones (a full lap adds one)
+                let landing_empty = if stones < LAP {
+                    self.pits[landing_pit] == 0
+                } else {
+                    stones == LAP
+                };
+                landing_empty && (self.pits[opposite_pit] > 0 || stones >= LAP)
+            };
+            if is_capture {
+                captures[num_captures] = pit_offset + i;
+                num_captures += 1;
+            } else {
+                others[num_others] = pit_offset + i;
+                num_others += 1;
+            }
+        }
+
+        let mut ordered_moves = [0; Self::PITS_PER_SIDE];
+        let mut n = 0;
+        for &m in &extra_turns[..num_extra_turns] {
+            ordered_moves[n] = m;
+            n += 1;
+        }
+        for &m in captures[..num_captures].iter().rev() {
+            ordered_moves[n] = m;
+            n += 1;
+        }
+        for &m in others[..num_others].iter().rev() {
+            ordered_moves[n] = m;
+            n += 1;
+        }
+
+        (ordered_moves, n)
+    }
+
+    // non-zero if player 1 has any stones in their pits
+    // reads the 6 pits as one 64 bit word (masking off the two bytes beyond them)
+    #[inline]
+    fn player_1_side(&self) -> u64 {
+        u64::from_le_bytes(self.pits[0..8].try_into().unwrap()) & 0x0000_FFFF_FFFF_FFFF
+    }
+
+    // non-zero if player 2 has any stones in their pits (bytes 7..13, masking off both stores)
+    #[inline]
+    fn player_2_side(&self) -> u64 {
+        u64::from_le_bytes(self.pits[6..14].try_into().unwrap()) & 0x00FF_FFFF_FFFF_FF00
+    }
 
     pub fn new() -> MancalaGameState {
         MancalaGameState {
@@ -183,29 +238,22 @@ impl MancalaGameState {
     }
 
     pub fn handle_game_over(&mut self) {
-        // handle game over
-        let mut player_one_stones = 0;
-        for i in Self::PLAYER_1_PITS {
-            player_one_stones += self.pits[i];
-        }
-
-        let mut player_two_stones = 0;
-        for i in Self::PLAYER_2_PITS {
-            player_two_stones += self.pits[i];
-        }
-
-        // assume only player one or player two can have 0 stones (which is true in valid game play)
-        if player_one_stones == 0 {
-            self.pits[Self::PLAYER_2_STORE] += player_two_stones;
+        // only one side can be empty in valid game play, but if both are this still ends the game
+        if self.player_1_side() == 0 {
+            let mut player_two_stones = 0;
             for i in Self::PLAYER_2_PITS {
+                player_two_stones += self.pits[i];
                 self.pits[i] = 0;
             }
+            self.pits[Self::PLAYER_2_STORE] += player_two_stones;
             self.game_over = true;
-        } else if player_two_stones == 0 {
-            self.pits[Self::PLAYER_1_STORE] += player_one_stones;
+        } else if self.player_2_side() == 0 {
+            let mut player_one_stones = 0;
             for i in Self::PLAYER_1_PITS {
+                player_one_stones += self.pits[i];
                 self.pits[i] = 0;
             }
+            self.pits[Self::PLAYER_1_STORE] += player_one_stones;
             self.game_over = true;
         }
     }
@@ -213,22 +261,29 @@ impl MancalaGameState {
     // moves stones and returns the final pit played in to
     fn move_stones(&mut self, player_move: usize, opponents_store: usize) -> usize {
         // take stones out of the chosen pit
-        let number_of_stones: u32 = self.pits[player_move];
+        let number_of_stones = self.pits[player_move];
         self.pits[player_move] = 0;
 
-        // add the remaining stones to each pit (except the opponent's store)
-        let mut current_pit = player_move + 1;
+        // add the stones to each following pit (except the opponent's store)
+        // wrap with a compare rather than a modulo per stone
+        let mut current_pit = player_move;
         for _ in 0..number_of_stones {
-            // skip the opponent's store
-            if current_pit % Self::TOTAL_PITS == opponents_store {
-                current_pit += 1;
-            }
-            self.pits[current_pit % Self::TOTAL_PITS] += 1;
             current_pit += 1;
+            if current_pit == Self::TOTAL_PITS {
+                current_pit = 0;
+            }
+            // skip the opponent's store
+            if current_pit == opponents_store {
+                current_pit += 1;
+                if current_pit == Self::TOTAL_PITS {
+                    current_pit = 0;
+                }
+            }
+            self.pits[current_pit] += 1;
         }
 
         // return the final pit played to
-        (current_pit - 1) % Self::TOTAL_PITS
+        current_pit
     }
 
     pub fn make_move(&mut self, player_move: usize, players_store: usize, opponents_store: usize) {
@@ -329,7 +384,7 @@ mod tests {
     const P1_STORE: usize = MancalaGameState::PLAYER_1_STORE;
     const P2_STORE: usize = MancalaGameState::PLAYER_2_STORE;
 
-    fn state(pits: [u32; MancalaGameState::TOTAL_PITS], turn: bool) -> MancalaGameState {
+    fn state(pits: [u8; MancalaGameState::TOTAL_PITS], turn: bool) -> MancalaGameState {
         MancalaGameState {
             pits,
             turn,
@@ -338,7 +393,7 @@ mod tests {
     }
 
     fn total(s: &MancalaGameState) -> u32 {
-        s.pits.iter().sum()
+        s.pits.iter().map(|&p| p as u32).sum()
     }
 
     #[test]
@@ -438,6 +493,22 @@ mod tests {
         assert_eq!(children.len(), 2);
         assert!(children[0].turn, "extra-turn move should be searched first");
         assert!(!children[1].turn);
+    }
+
+    #[test]
+    fn moves_are_ordered_extra_turns_then_captures_then_the_rest() {
+        // A (1 stone) lands in empty B opposite 3 stones: capture
+        // C (4 stones) ends in the store: extra turn
+        // D (1 stone) lands in E which has stones, E (3 stones) lands on the opponent's side: neither
+        // F (13 stones) laps back into the emptied F, opposite gets a stone: capture
+        let s = state([1, 0, 4, 1, 3, 13, 0, 0, 0, 0, 0, 3, 0, 0], true);
+        let (moves, n) = s.ordered_moves();
+        assert_eq!(&moves[..n], &[2, 5, 0, 4, 3]);
+
+        // the same position from player 2's side
+        let s = state([0, 0, 0, 0, 3, 0, 0, 1, 0, 4, 1, 3, 13, 0], false);
+        let (moves, n) = s.ordered_moves();
+        assert_eq!(&moves[..n], &[9, 12, 7, 11, 10]);
     }
 
     #[test]

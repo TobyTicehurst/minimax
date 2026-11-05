@@ -125,7 +125,7 @@ fn all_positions(
     max_depth: u32,
 ) -> u32 {
     if pit_index == 12 {
-        game_state.pits[12] = remaining_stones;
+        game_state.pits[12] = remaining_stones as u8;
         let new_depth = depth_analysis(&game_state, 0, max_depth);
         if new_depth == max_depth {
             info!("{:?}", game_state);
@@ -141,7 +141,7 @@ fn all_positions(
         );
     } else {
         for i in 0..(remaining_stones + 1) {
-            game_state.pits[pit_index] = i;
+            game_state.pits[pit_index] = i as u8;
             depth = max(
                 depth,
                 all_positions(
@@ -415,12 +415,88 @@ fn testing() {
     }
 }
 
+#[derive(Clone, Copy)]
+enum FullSolveAlgorithm {
+    // iterative deepening mtdf, then a full-depth mtdf, with a transposition table
+    MtdfMemory,
+    // a single full-window alphabeta search with only the endgames table
+    AlphabetaNoMemory,
+    // mtdf with only the endgames table
+    MtdfNoMemory,
+}
+
+// solve without a transposition table, returning the best move and its value
+fn full_solve_no_memory(
+    start_game_state: MancalaGameState,
+    endgames_table: &Rc<MancalaEndgamesTable>,
+    algorithm: FullSolveAlgorithm,
+) -> (usize, i32) {
+    let mut minimax_solver = Solver::new(start_game_state, 0, 0, 0, endgames_table);
+    let mut game_state_cache = MancalaGameState::generate_children_memory(10000);
+
+    let maximising = start_game_state.is_maximising_player();
+    let mut solve = |game_state: &MancalaGameState, best: Option<i32>| match algorithm {
+        FullSolveAlgorithm::MtdfNoMemory => {
+            let mut solver = Solver::new(*game_state, 0, 0, 0, endgames_table);
+            solver.mtdf_test(0, &mut game_state_cache)
+        }
+        // alphabeta at the root: only need to know if a child beats the best so far
+        // a fail-soft result that doesn't beat it is a bound, but then it isn't chosen anyway
+        _ => {
+            let (alpha, beta) = match (best, maximising) {
+                (Some(b), true) => (b, i32::MAX),
+                (Some(b), false) => (i32::MIN, b),
+                (None, _) => (i32::MIN, i32::MAX),
+            };
+            minimax_solver.test(game_state, alpha, beta, &mut game_state_cache)
+        }
+    };
+
+    // without a table we can't recover the best move from inside the search, so loop over the root's children here
+    // use the same move order as the search so a good move is found early and narrows the window for the rest
+    let (players_store, opponents_store) = if maximising {
+        (MancalaGameState::PLAYER_1_STORE, MancalaGameState::PLAYER_2_STORE)
+    } else {
+        (MancalaGameState::PLAYER_2_STORE, MancalaGameState::PLAYER_1_STORE)
+    };
+    let (moves, num_moves) = start_game_state.ordered_moves();
+    let mut best: Option<(usize, i32)> = None;
+    for &child_move in &moves[..num_moves] {
+        let mut child = start_game_state;
+        child.make_move(child_move, players_store, opponents_store);
+        let eval = solve(&child, best.map(|(_, e)| e));
+        let better = match best {
+            None => true,
+            Some((_, best_eval)) => {
+                if maximising {
+                    eval > best_eval
+                } else {
+                    eval < best_eval
+                }
+            }
+        };
+        if better {
+            best = Some((child_move, eval));
+        }
+    }
+
+    best.expect("solve called on a finished game")
+}
+
 // solve the starting position, and optionally each of player 1's opening moves
-fn solve_opening(endgames_table: &Rc<MancalaEndgamesTable>, each_move: bool) {
+fn solve_opening(
+    endgames_table: &Rc<MancalaEndgamesTable>,
+    each_move: bool,
+    algorithm: FullSolveAlgorithm,
+) {
     let start = MancalaGameState::default();
+    let solve = |game_state: MancalaGameState| match algorithm {
+        FullSolveAlgorithm::MtdfMemory => full_solve(game_state, endgames_table),
+        _ => full_solve_no_memory(game_state, endgames_table, algorithm),
+    };
 
     let now = SystemTime::now();
-    let (best_move, eval) = full_solve(start, endgames_table);
+    let (best_move, eval) = solve(start);
     info!(
         "Starting position: value {} (positive = player 1 ahead), best move {}, {}ms",
         eval,
@@ -437,7 +513,7 @@ fn solve_opening(endgames_table: &Rc<MancalaEndgamesTable>, each_move: bool) {
             .zip(start.get_valid_moves())
         {
             let now = SystemTime::now();
-            let (_, eval) = full_solve(child, endgames_table);
+            let (_, eval) = solve(child);
             info!(
                 "Opening move {} (pit {}): value {}, {}ms",
                 MancalaMove::from_index(&child_move).unwrap().to_str(),
@@ -487,7 +563,7 @@ fn main() {
                 now.elapsed().unwrap().as_secs()
             );
         }
-        // cargo run --release -- solve [path] [--moves]
+        // cargo run --release -- solve [path] [--moves] [--no-tt | --no-tt-mtdf]
         Some("solve") => {
             let path = args
                 .get(2)
@@ -495,7 +571,18 @@ fn main() {
                 .map(String::as_str)
                 .unwrap_or("endgames.bin");
             let endgames_table = Rc::new(MancalaEndgamesTable::read_from_file(path));
-            solve_opening(&endgames_table, args.iter().any(|a| a == "--moves"));
+            let algorithm = if args.iter().any(|a| a == "--no-tt") {
+                FullSolveAlgorithm::AlphabetaNoMemory
+            } else if args.iter().any(|a| a == "--no-tt-mtdf") {
+                FullSolveAlgorithm::MtdfNoMemory
+            } else {
+                FullSolveAlgorithm::MtdfMemory
+            };
+            solve_opening(
+                &endgames_table,
+                args.iter().any(|a| a == "--moves"),
+                algorithm,
+            );
         }
         _ => testing(),
     }
